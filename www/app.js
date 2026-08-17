@@ -186,6 +186,36 @@ const filterSelect = document.getElementById("filterSelect");
 const appTitleEl = document.getElementById("appTitle");
 const logoDotEl = document.getElementById("logoDot");
 
+/* ============ تصغير وضغط الصور قبل التخزين ============
+   بدون الخطوة دي، أي صورة من الكاميرا (ممكن توصل 4000×3000 بكسل و8 ميجا)
+   بتتخزن وتتعرض بحجمها الأصلي كامل، وده بيستهلك رامة رهيبة ويسبب كراش
+   على الأجهزة الضعيفة، خصوصًا لما يبقى عندك عشرات أو مئات الصور مع بعض. */
+function resizeImageFile(file, maxWidth = 480, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => {
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxWidth) {
+          height = Math.round((maxWidth / width) * height);
+          width = maxWidth;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ============ عرض القائمة ============ */
 function render() {
   const query = searchInput.value.trim().toLowerCase();
@@ -215,13 +245,15 @@ function render() {
       <div class="card-image-wrap">
         ${
           anime.image
-            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" />`
-            : `<div class="no-image"><svg viewBox="0 0 24 24" width="34" height="34"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
+            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" loading="lazy" decoding="async" />`
+            : `<div class="no-image"><svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
         }
-        <div class="status-chip st-${statusKey}">${statusText}</div>
-        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
+        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
       </div>
-      <div class="card-title">${escapeHtml(anime.name)}</div>
+      <div class="card-info">
+        <div class="card-title">${escapeHtml(anime.name)}</div>
+        <div class="status-chip st-${statusKey}">${statusText}</div>
+      </div>
     `;
 
     if (editMode) {
@@ -309,17 +341,17 @@ function closeAnimeModal() {
 
 imagePicker.addEventListener("click", () => imageInput.click());
 
-imageInput.addEventListener("change", () => {
+imageInput.addEventListener("change", async () => {
   const file = imageInput.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    pickedImageDataUrl = reader.result;
+  try {
+    pickedImageDataUrl = await resizeImageFile(file, 480, 0.72);
     imagePreview.src = pickedImageDataUrl;
     imagePreview.classList.remove("hidden");
     imagePlaceholder.classList.add("hidden");
-  };
-  reader.readAsDataURL(file);
+  } catch (e) {
+    showToast("حصلت مشكلة في تحميل الصورة");
+  }
 });
 
 document.getElementById("saveAnimeBtn").addEventListener("click", async () => {
@@ -382,7 +414,13 @@ toggleEditBtn.addEventListener("click", () => {
 });
 
 /* ============ البحث والفلترة ============ */
-searchInput.addEventListener("input", render);
+// تأخير بسيط (debounce) قبل إعادة البناء، عشان الكتابة السريعة
+// متعملش عشرات عمليات إعادة رسم للشاشة خلال ثانية واحدة
+let searchDebounceTimer;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(render, 220);
+});
 filterSelect.addEventListener("change", render);
 
 /* ============ توست ============ */
@@ -463,19 +501,18 @@ logoImageInput.addEventListener("change", async () => {
   const files = Array.from(logoImageInput.files || []);
   if (files.length === 0) return;
 
-  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-
-  const newImages = await Promise.all(files.map(readAsDataUrl));
-  appSettings.gallery = [...appSettings.gallery, ...newImages];
-  await dbSettingsPut("gallery", appSettings.gallery);
-  renderLogoGallery();
-  logoImageInput.value = "";
-  showToast("تم رفع الصور ✅");
+  try {
+    const newImages = await Promise.all(
+      files.map((file) => resizeImageFile(file, 480, 0.72))
+    );
+    appSettings.gallery = [...appSettings.gallery, ...newImages];
+    await dbSettingsPut("gallery", appSettings.gallery);
+    renderLogoGallery();
+    logoImageInput.value = "";
+    showToast("تم رفع الصور ✅");
+  } catch (e) {
+    showToast("حصلت مشكلة أثناء رفع الصور");
+  }
 });
 
 function renderLogoGallery() {
@@ -488,7 +525,7 @@ function renderLogoGallery() {
     const item = document.createElement("div");
     item.className = "logo-gallery-item" + (imgSrc === appSettings.logo ? " active" : "");
     item.innerHTML = `
-      <img src="${imgSrc}" alt="logo option" />
+      <img src="${imgSrc}" alt="logo option" loading="lazy" decoding="async" />
       <button class="logo-delete-btn" data-idx="${idx}" aria-label="حذف">✕</button>
     `;
     item.querySelector("img").addEventListener("click", async () => {

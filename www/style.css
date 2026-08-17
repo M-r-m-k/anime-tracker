@@ -138,11 +138,11 @@ body {
 }
 #searchInput::placeholder { color: var(--text-faint); }
 
-/* ===== Grid ===== */
+/* ===== Grid (عرض القائمة بعمود واحد) ===== */
 .grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   padding: 14px 16px calc(100px + var(--safe-bottom));
 }
 
@@ -152,10 +152,15 @@ body {
   border-radius: var(--radius-lg);
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: row-reverse; /* الصورة يمين، المعلومات شمال (متسق مع RTL) */
+  align-items: stretch;
 }
 
 .card-image-wrap {
   position: relative;
+  flex: 0 0 96px;
+  width: 96px;
   aspect-ratio: 2 / 3;
   background: linear-gradient(160deg, #241f30, #17141f);
   overflow: hidden;
@@ -167,18 +172,34 @@ body {
   color: var(--text-faint);
 }
 
-.status-chip {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
-  left: 8px;
-  padding: 5px 8px;
-  border-radius: 8px;
-  font-size: 10.5px;
-  text-align: center;
+.card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.card-title {
+  font-size: 14.5px;
   font-weight: 700;
-  backdrop-filter: blur(6px);
-  background: rgba(14,12,20,0.72);
+  line-height: 1.4;
+  color: var(--text-primary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.status-chip {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.08);
 }
 .status-chip.st-finished_watched { color: var(--success); }
@@ -188,20 +209,11 @@ body {
 .status-chip.st-unwatched { color: var(--accent-1); }
 .status-chip.st-empty { color: var(--text-faint); }
 
-.card-title {
-  padding: 9px 10px 11px;
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--text-primary);
-  min-height: 34px;
-}
-
 .card-edit-btn {
   position: absolute;
   top: 8px;
   left: 8px;
-  width: 30px; height: 30px;
+  width: 28px; height: 28px;
   border-radius: 9px;
   background: rgba(14,12,20,0.75);
   border: 1px solid rgba(255,255,255,0.12);
