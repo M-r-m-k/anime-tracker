@@ -1,6 +1,6 @@
 {
   "appId": "com.animeapp.tracker",
-  "appName": "قائمة الأنمي",
+  "appName": "Animelist",
   "webDir": "www",
   "backgroundColor": "#0e0c14",
   "android": {
