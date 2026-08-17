@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>قائمة الأنمي</title>
+<title>Animelist</title>
 <link rel="stylesheet" href="style.css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -14,7 +14,7 @@
   <header class="topbar">
     <div class="topbar-title">
       <span class="logo-dot" id="logoDot"></span>
-      <h1 id="appTitle">قائمة الأنمي</h1>
+      <h1 id="appTitle">Animelist</h1>
     </div>
     <button class="icon-btn" id="menuBtn" aria-label="القائمة">
       <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
@@ -23,43 +23,44 @@
     <div class="dropdown-menu" id="dropdownMenu">
       <button id="toggleEditBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-        <span id="toggleEditLabel">تعديل</span>
+        <span id="toggleEditLabel" data-text-key="menu_edit">تعديل</span>
       </button>
       <button id="changeLogoBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-        <span>تغيير صورة التطبيق</span>
+        <span data-text-key="menu_change_logo">تغيير صورة التطبيق</span>
       </button>
       <button id="changeNameBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4z"/></svg>
-        <span>تغيير اسم التطبيق</span>
+        <span data-text-key="menu_change_name">تغيير اسم التطبيق</span>
       </button>
       <button id="editColorsBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.52-.2-.99-.53-1.34-.32-.34-.52-.8-.52-1.31 0-1.1.9-2 2-2H17a5 5 0 0 0 5-5c0-4.42-4.48-8-10-8zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM9 7.5A1.5 1.5 0 1 1 9 4.5a1.5 1.5 0 0 1 0 3zm6 0A1.5 1.5 0 1 1 15 4.5a1.5 1.5 0 0 1 0 3zm3.5 3.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>
-        <span>تعديل الألوان</span>
+        <span data-text-key="menu_edit_colors">تعديل الألوان</span>
+      </button>
+      <button id="editTextsBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4z"/></svg>
+        <span data-text-key="menu_edit_texts">تعديل النصوص</span>
+      </button>
+      <button id="editStatusesBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
+        <span data-text-key="menu_edit_statuses">تعديل الحالات</span>
       </button>
       <button id="exportBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3v10.59l3.29-3.3 1.42 1.42L12 17.41l-4.71-4.7 1.42-1.42 3.29 3.3V3h2zM5 19h14v2H5v-2z"/></svg>
-        <span>تصدير نسخة احتياطية</span>
+        <span data-text-key="menu_export">تصدير نسخة احتياطية</span>
       </button>
       <button id="importBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 17.41l-4.71-4.7 1.42-1.42 3.29 3.3V4h2v10.59l3.29-3.3 1.42 1.42L12 17.41zM5 19h14v2H5v-2z" transform="rotate(180 12 12)"/></svg>
-        <span>استيراد نسخة احتياطية</span>
+        <span data-text-key="menu_import">استيراد نسخة احتياطية</span>
       </button>
     </div>
   </header>
 
   <!-- شريط الفلترة -->
   <div class="filter-bar">
-    <input type="search" id="searchInput" placeholder="ابحث عن أنمي..." />
-    <select id="filterSelect">
-      <option value="">كل الحالات</option>
-      <option value="finished_watched">منتهي - تمت مشاهدته</option>
-      <option value="finished_boring">منتهي - وممل</option>
-      <option value="ecchi_finished">إيتشي - منتهي</option>
-      <option value="ecchi_unwatched">إيتشي - لم يُشاهد</option>
-      <option value="unwatched">لم تتم مشاهدته</option>
-    </select>
+    <input type="search" id="searchInput" data-text-placeholder-key="search_placeholder" placeholder="ابحث عن أنمي..." />
   </div>
+  <div id="filterSegments" class="segmented-wrap filter-segments"></div>
 
   <!-- الشبكة الرئيسية -->
   <main id="grid" class="grid"></main>
@@ -67,8 +68,8 @@
   <!-- حالة فارغة -->
   <div id="emptyState" class="empty-state hidden">
     <svg viewBox="0 0 24 24" width="56" height="56"><path fill="currentColor" opacity="0.4" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 15a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm1-4.5h-2V7h2v5.5z"/></svg>
-    <p>لسه مفيش أي أنمي مضاف</p>
-    <span>افتح وضع التعديل وضيف أول عنصر</span>
+    <p data-text-key="empty_title">لسه مفيش أي أنمي مضاف</p>
+    <span data-text-key="empty_subtitle">افتح وضع التعديل وضيف أول عنصر</span>
   </div>
 
   <!-- زرار الإضافة العائم -->
@@ -81,34 +82,31 @@
     <div class="modal">
       <h2 id="animeModalTitle">إضافة أنمي</h2>
 
-      <label class="field-label">صورة الغلاف</label>
+      <label class="field-label" data-text-key="field_label_image">صورة الغلاف</label>
       <div class="image-picker" id="imagePicker">
         <img id="imagePreview" class="hidden" />
         <div id="imagePlaceholder" class="image-placeholder">
           <svg viewBox="0 0 24 24" width="32" height="32"><path fill="currentColor" opacity="0.5" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <span>دوس لاختيار صورة</span>
+          <span data-text-key="image_picker_placeholder">دوس لاختيار صورة</span>
         </div>
+      </div>
+      <div id="imageProgressWrap" class="progress-wrap hidden">
+        <div class="progress-track"><div class="progress-fill" id="imageProgressFill"></div></div>
+        <span class="progress-label" id="imageProgressLabel">0%</span>
       </div>
       <input type="file" id="imageInput" accept="image/*" class="hidden" />
 
-      <label class="field-label">الاسم</label>
-      <input type="text" id="nameInput" class="text-field" placeholder="اسم الأنمي" />
+      <label class="field-label" data-text-key="field_label_name">الاسم</label>
+      <input type="text" id="nameInput" class="text-field" data-text-placeholder-key="field_name_placeholder" placeholder="اسم الأنمي" />
 
-      <label class="field-label">الحالة</label>
-      <select id="statusInput" class="text-field">
-        <option value="">اختر الحالة</option>
-        <option value="finished_watched">منتهي - تمت مشاهدته</option>
-        <option value="finished_boring">منتهي - وممل، لن يتم تحميله مرة أخرى</option>
-        <option value="ecchi_finished">إيتشي - منتهي</option>
-        <option value="ecchi_unwatched">إيتشي - لم يُشاهد</option>
-        <option value="unwatched">لم تتم مشاهدته</option>
-      </select>
+      <label class="field-label" data-text-key="field_label_status">الحالة</label>
+      <div id="statusSegments" class="segmented-wrap"></div>
 
       <div class="modal-actions">
-        <button id="deleteAnimeBtn" class="btn btn-danger hidden">حذف</button>
+        <button id="deleteAnimeBtn" class="btn btn-danger hidden" data-text-key="btn_delete">حذف</button>
         <div class="modal-actions-right">
-          <button id="cancelAnimeBtn" class="btn btn-ghost">إلغاء</button>
-          <button id="saveAnimeBtn" class="btn btn-primary">حفظ</button>
+          <button id="cancelAnimeBtn" class="btn btn-ghost" data-text-key="btn_cancel">إلغاء</button>
+          <button id="saveAnimeBtn" class="btn btn-primary" data-text-key="btn_save">حفظ</button>
         </div>
       </div>
     </div>
@@ -117,17 +115,22 @@
   <!-- مودال صورة التطبيق -->
   <div class="modal-overlay hidden" id="logoModalOverlay">
     <div class="modal">
-      <h2>تغيير صورة التطبيق</h2>
-      <p class="modal-desc">ارفع صورة أو أكتر، وادوس على أي صورة عشان تخليها صورة التطبيق الحالية. باقي الصور بتفضل محفوظة تقدر ترجعلها تاني وقت ما تحب.</p>
+      <h2 data-text-key="logo_modal_title">تغيير صورة التطبيق</h2>
+      <p class="modal-desc" data-text-key="logo_modal_desc">ارفع صورة أو أكتر، وادوس على أي صورة عشان تخليها صورة التطبيق الحالية. باقي الصور بتفضل محفوظة تقدر ترجعلها تاني وقت ما تحب.</p>
 
-      <button id="uploadLogoBtn" class="btn btn-primary full-btn">رفع صورة جديدة</button>
+      <button id="uploadLogoBtn" class="btn btn-primary full-btn" data-text-key="btn_upload_new_image">رفع صورة جديدة</button>
       <input type="file" id="logoImageInput" accept="image/*" multiple class="hidden" />
+
+      <div id="logoProgressWrap" class="progress-wrap hidden">
+        <div class="progress-track"><div class="progress-fill" id="logoProgressFill"></div></div>
+        <span class="progress-label" id="logoProgressLabel">0%</span>
+      </div>
 
       <div id="logoGallery" class="logo-gallery"></div>
 
       <div class="modal-actions">
         <div class="modal-actions-right full-width">
-          <button id="closeLogoModalBtn" class="btn btn-ghost">إغلاق</button>
+          <button id="closeLogoModalBtn" class="btn btn-ghost" data-text-key="btn_close">إغلاق</button>
         </div>
       </div>
     </div>
@@ -136,15 +139,15 @@
   <!-- مودال اسم التطبيق -->
   <div class="modal-overlay hidden" id="nameModalOverlay">
     <div class="modal">
-      <h2>تغيير اسم التطبيق</h2>
+      <h2 data-text-key="name_modal_title">تغيير اسم التطبيق</h2>
 
-      <label class="field-label">الاسم الجديد</label>
+      <label class="field-label" data-text-key="field_label_new_name">الاسم الجديد</label>
       <input type="text" id="appNameInput" class="text-field" placeholder="اسم التطبيق" />
 
       <div class="modal-actions">
         <div class="modal-actions-right full-width">
-          <button id="cancelNameBtn" class="btn btn-ghost">إلغاء</button>
-          <button id="saveNameBtn" class="btn btn-primary">حفظ</button>
+          <button id="cancelNameBtn" class="btn btn-ghost" data-text-key="btn_cancel">إلغاء</button>
+          <button id="saveNameBtn" class="btn btn-primary" data-text-key="btn_save">حفظ</button>
         </div>
       </div>
     </div>
@@ -153,15 +156,55 @@
   <!-- مودال تعديل الألوان -->
   <div class="modal-overlay hidden" id="colorsModalOverlay">
     <div class="modal">
-      <h2>تعديل الألوان</h2>
-      <p class="modal-desc">أي تغيير بيتطبق فورًا. لما تخلص دوس حفظ عشان يتثبت.</p>
+      <h2 data-text-key="colors_modal_title">تعديل الألوان</h2>
+      <p class="modal-desc" data-text-key="colors_modal_desc">أي تغيير بيتطبق فورًا. لما تخلص دوس حفظ عشان يتثبت.</p>
 
       <div id="colorsList" class="colors-list"></div>
 
       <div class="modal-actions">
         <div class="modal-actions-right full-width">
-          <button id="resetColorsBtn" class="btn btn-ghost">استرجاع الافتراضي</button>
-          <button id="saveColorsBtn" class="btn btn-primary">حفظ</button>
+          <button id="resetColorsBtn" class="btn btn-ghost" data-text-key="btn_reset_default">استرجاع الافتراضي</button>
+          <button id="saveColorsBtn" class="btn btn-primary" data-text-key="btn_save">حفظ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- مودال تعديل النصوص -->
+  <div class="modal-overlay hidden" id="textsModalOverlay">
+    <div class="modal">
+      <h2 data-text-key="texts_modal_title">تعديل النصوص</h2>
+      <p class="modal-desc" data-text-key="texts_modal_desc">غيّر أي نص ظاهر في التطبيق زي ما تحب. الحفظ بيتطبق فورًا.</p>
+
+      <div id="textsList" class="texts-list"></div>
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="resetTextsBtn" class="btn btn-ghost" data-text-key="btn_reset_default">استرجاع الافتراضي</button>
+          <button id="saveTextsBtn" class="btn btn-primary" data-text-key="btn_save">حفظ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- مودال تعديل الحالات -->
+  <div class="modal-overlay hidden" id="statusesModalOverlay">
+    <div class="modal">
+      <h2 data-text-key="statuses_modal_title">تعديل الحالات</h2>
+      <p class="modal-desc" data-text-key="statuses_modal_desc">تقدر تحذف أي حالة أو تضيف حالة جديدة بلونها الخاص.</p>
+
+      <div id="statusesList" class="statuses-list"></div>
+
+      <label class="field-label" data-text-key="field_label_new_status">إضافة حالة جديدة</label>
+      <div class="new-status-row">
+        <input type="color" id="newStatusColor" value="#3b82f6" />
+        <input type="text" id="newStatusLabel" class="text-field" data-text-placeholder-key="field_new_status_placeholder" placeholder="اسم الحالة الجديدة" />
+        <button id="addStatusBtn" class="btn btn-primary">+</button>
+      </div>
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="closeStatusesBtn" class="btn btn-ghost" data-text-key="btn_close">إغلاق</button>
         </div>
       </div>
     </div>
@@ -170,27 +213,32 @@
   <!-- مودال التصدير -->
   <div class="modal-overlay hidden" id="exportModalOverlay">
     <div class="modal">
-      <h2>تصدير نسخة احتياطية</h2>
-      <p class="modal-desc">هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.</p>
+      <h2 data-text-key="export_modal_title">تصدير نسخة احتياطية</h2>
+      <p class="modal-desc" data-text-key="export_modal_desc">هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.</p>
 
       <label class="switch-row">
-        <span>تشفير الملف بكلمة سر</span>
+        <span data-text-key="export_encrypt_label">تشفير الملف بكلمة سر</span>
         <input type="checkbox" id="encryptToggle" />
         <span class="switch-track"><span class="switch-thumb"></span></span>
       </label>
 
       <div id="exportPasswordWrap" class="hidden">
-        <label class="field-label">كلمة السر</label>
-        <input type="password" id="exportPassword" class="text-field" placeholder="اكتب كلمة سر قوية" />
-        <label class="field-label">تأكيد كلمة السر</label>
-        <input type="password" id="exportPasswordConfirm" class="text-field" placeholder="اكتب كلمة السر تاني" />
-        <p class="hint-text">⚠️ لو نسيت كلمة السر، مش هيبقى فيه طريقة لاسترجاع البيانات.</p>
+        <label class="field-label" data-text-key="field_label_password">كلمة السر</label>
+        <input type="password" id="exportPassword" class="text-field" data-text-placeholder-key="field_password_placeholder" placeholder="اكتب كلمة سر قوية" />
+        <label class="field-label" data-text-key="field_label_password_confirm">تأكيد كلمة السر</label>
+        <input type="password" id="exportPasswordConfirm" class="text-field" data-text-placeholder-key="field_password_confirm_placeholder" placeholder="اكتب كلمة السر تاني" />
+        <p class="hint-text" data-text-key="export_password_warning">⚠️ لو نسيت كلمة السر، مش هيبقى فيه طريقة لاسترجاع البيانات.</p>
+      </div>
+
+      <div id="exportProgressWrap" class="progress-wrap hidden">
+        <div class="progress-track"><div class="progress-fill" id="exportProgressFill"></div></div>
+        <span class="progress-label" id="exportProgressLabel">0%</span>
       </div>
 
       <div class="modal-actions">
         <div class="modal-actions-right full-width">
-          <button id="cancelExportBtn" class="btn btn-ghost">إلغاء</button>
-          <button id="confirmExportBtn" class="btn btn-primary">تصدير الآن</button>
+          <button id="cancelExportBtn" class="btn btn-ghost" data-text-key="btn_cancel">إلغاء</button>
+          <button id="confirmExportBtn" class="btn btn-primary" data-text-key="export_confirm_btn">تصدير الآن</button>
         </div>
       </div>
     </div>
@@ -199,33 +247,32 @@
   <!-- مودال الاستيراد -->
   <div class="modal-overlay hidden" id="importModalOverlay">
     <div class="modal">
-      <h2>استيراد نسخة احتياطية</h2>
-      <p class="modal-desc">هيتم استبدال كل البيانات الحالية بالبيانات اللي في الملف.</p>
+      <h2 data-text-key="import_modal_title">استيراد نسخة احتياطية</h2>
+      <p class="modal-desc" data-text-key="import_modal_desc">هيتم استبدال كل البيانات الحالية بالبيانات اللي في الملف.</p>
 
-      <label class="field-label">مسار الملف (اختياري)</label>
-      <div class="path-row">
-        <input type="text" id="importPathInput" class="text-field" placeholder="مثال: /storage/emulated/0/Download/anime-backup.animebackup" />
-        <button id="loadFromPathBtn" class="btn btn-primary">تحميل</button>
-      </div>
-
-      <label class="field-label">أو اختار الملف من الجهاز</label>
+      <label class="field-label" data-text-key="field_label_choose_file">اختار الملف من الجهاز</label>
       <label for="importFileInput" class="file-picker-btn">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 17.41l-4.71-4.7 1.42-1.42 3.29 3.3V4h2v10.59l3.29-3.3 1.42 1.42L12 17.41zM5 19h14v2H5v-2z" transform="rotate(180 12 12)"/></svg>
-        <span id="importFileLabel">اختيار ملف</span>
+        <span id="importFileLabel" data-text-key="btn_choose_file">اختيار ملف</span>
       </label>
       <input type="file" id="importFileInput" accept=".animebackup,.json" class="hidden" />
 
       <div id="importPasswordWrap" class="hidden">
-        <label class="field-label">كلمة السر</label>
-        <input type="password" id="importPassword" class="text-field" placeholder="اكتب كلمة سر الملف" />
+        <label class="field-label" data-text-key="field_label_password">كلمة السر</label>
+        <input type="password" id="importPassword" class="text-field" data-text-placeholder-key="field_import_password_placeholder" placeholder="اكتب كلمة سر الملف" />
+      </div>
+
+      <div id="importProgressWrap" class="progress-wrap hidden">
+        <div class="progress-track"><div class="progress-fill" id="importProgressFill"></div></div>
+        <span class="progress-label" id="importProgressLabel">0%</span>
       </div>
 
       <p id="importError" class="hint-text error hidden"></p>
 
       <div class="modal-actions">
         <div class="modal-actions-right full-width">
-          <button id="cancelImportBtn" class="btn btn-ghost">إلغاء</button>
-          <button id="confirmImportBtn" class="btn btn-primary">استيراد</button>
+          <button id="cancelImportBtn" class="btn btn-ghost" data-text-key="btn_cancel">إلغاء</button>
+          <button id="confirmImportBtn" class="btn btn-primary" data-text-key="btn_import">استيراد</button>
         </div>
       </div>
     </div>

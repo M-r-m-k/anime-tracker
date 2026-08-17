@@ -12,6 +12,7 @@
   --accent-gradient: linear-gradient(135deg, var(--accent-1) 0%, var(--accent-2) 55%, var(--accent-3) 100%);
   --success: #34d399;
   --danger: #ff5470;
+  --progress: #3b82f6;
   --radius-lg: 20px;
   --radius-md: 14px;
   --radius-sm: 10px;
@@ -32,15 +33,15 @@ html, body {
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(1200px 600px at 90% -10%, rgba(255, 61, 119, 0.14), transparent 60%),
-    radial-gradient(900px 500px at -10% 10%, rgba(255, 106, 61, 0.10), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .hidden { display: none !important; }
 
-/* ===== Topbar ===== */
+/* ===== Topbar =====
+   ملاحظة أداء: تعمدنا عدم استخدام backdrop-filter/blur هنا لأنه تأثير
+   تقيل جدًا على معالجات الرسوميات الضعيفة، وبيسبب تهنيج ملحوظ مع أي
+   تفاعل أو تمرير على الأجهزة منخفضة الإمكانيات. */
 .topbar {
   position: sticky;
   top: 0;
@@ -49,8 +50,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: calc(14px + var(--safe-top)) 18px 14px;
-  background: rgba(14, 12, 20, 0.85);
-  backdrop-filter: blur(14px);
+  background: var(--bg-elevated);
   border-bottom: 1px solid var(--card-border);
 }
 
@@ -58,17 +58,9 @@ body {
 .topbar-title h1 { font-family: 'Cairo', sans-serif; font-size: 19px; font-weight: 800; margin: 0; }
 
 .logo-dot {
-  width: 10px; height: 10px; border-radius: 50%;
+  width: 28px; height: 28px; border-radius: 8px;
   background: var(--accent-gradient);
-  box-shadow: 0 0 12px rgba(255, 106, 61, 0.7);
-}
-
-.logo-img {
-  width: 28px; height: 28px;
-  border-radius: 8px;
-  object-fit: cover;
-  box-shadow: 0 0 12px rgba(255, 106, 61, 0.5);
-  border: 1px solid var(--card-border);
+  flex-shrink: 0;
 }
 
 .icon-btn {
@@ -103,7 +95,7 @@ body {
   border: none;
   color: var(--text-primary);
   font-family: 'Tajawal', sans-serif;
-  font-size: 14.5px;
+  font-size: 14px;
   text-align: right;
 }
 .menu-item:active { background: rgba(255,255,255,0.05); }
@@ -114,7 +106,7 @@ body {
 .filter-bar {
   display: flex;
   gap: 8px;
-  padding: 14px 16px 4px;
+  padding: 14px 16px 8px;
 }
 #searchInput {
   flex: 1;
@@ -126,24 +118,39 @@ body {
   font-family: 'Tajawal', sans-serif;
   font-size: 13.5px;
 }
-#filterSelect {
-  background: var(--card);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-sm);
-  padding: 11px 10px;
-  color: var(--text-secondary);
-  font-family: 'Tajawal', sans-serif;
-  font-size: 12.5px;
-  max-width: 120px;
-}
 #searchInput::placeholder { color: var(--text-faint); }
 
-/* ===== Grid ===== */
+/* ===== Segmented Control (شرائح الحالات الملونة) ===== */
+.segmented-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.filter-segments {
+  padding: 0 16px 10px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.filter-segments::-webkit-scrollbar { display: none; }
+
+.seg-chip {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 20px;
+  border: 1.5px solid;
+  font-family: 'Tajawal', sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ===== Grid (عرض القائمة بعمود واحد) ===== */
 .grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  padding: 14px 16px calc(100px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 16px calc(100px + var(--safe-bottom));
 }
 
 .card {
@@ -152,10 +159,15 @@ body {
   border-radius: var(--radius-lg);
   overflow: hidden;
   position: relative;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: stretch;
 }
 
 .card-image-wrap {
   position: relative;
+  flex: 0 0 96px;
+  width: 96px;
   aspect-ratio: 2 / 3;
   background: linear-gradient(160deg, #241f30, #17141f);
   overflow: hidden;
@@ -167,47 +179,46 @@ body {
   color: var(--text-faint);
 }
 
-.status-chip {
-  position: absolute;
-  bottom: 8px;
-  right: 8px;
-  left: 8px;
-  padding: 5px 8px;
-  border-radius: 8px;
-  font-size: 10.5px;
-  text-align: center;
-  font-weight: 700;
-  backdrop-filter: blur(6px);
-  background: rgba(14,12,20,0.72);
-  border: 1px solid rgba(255,255,255,0.08);
+.card-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 14px;
 }
-.status-chip.st-finished_watched { color: var(--success); }
-.status-chip.st-finished_boring { color: var(--text-secondary); }
-.status-chip.st-ecchi_finished { color: var(--accent-3); }
-.status-chip.st-ecchi_unwatched { color: var(--accent-2); }
-.status-chip.st-unwatched { color: var(--accent-1); }
-.status-chip.st-empty { color: var(--text-faint); }
 
 .card-title {
-  padding: 9px 10px 11px;
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.4;
   color: var(--text-primary);
-  min-height: 34px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.status-chip {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid;
 }
 
 .card-edit-btn {
   position: absolute;
   top: 8px;
   left: 8px;
-  width: 30px; height: 30px;
+  width: 28px; height: 28px;
   border-radius: 9px;
-  background: rgba(14,12,20,0.75);
+  background: rgba(14,12,20,0.85);
   border: 1px solid rgba(255,255,255,0.12);
   color: #fff;
   display: flex; align-items: center; justify-content: center;
-  backdrop-filter: blur(6px);
 }
 
 /* ===== Empty state ===== */
@@ -234,17 +245,17 @@ body {
   border: none;
   color: #1a0e08;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 10px 28px rgba(255, 61, 119, 0.45);
+  box-shadow: 0 10px 28px rgba(255, 61, 119, 0.35);
   z-index: 25;
 }
 .fab:active { transform: scale(0.94); }
 
-/* ===== Modal ===== */
+/* ===== Modal =====
+   شيلنا الـ blur من هنا برضه لنفس سبب الأداء */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5,4,8,0.72);
-  backdrop-filter: blur(4px);
+  background: rgba(5,4,8,0.85);
   display: flex;
   align-items: flex-end;
   z-index: 50;
@@ -313,7 +324,6 @@ body {
   background: var(--card);
   border: 1px solid var(--card-border);
   position: relative;
-  transition: background 0.2s;
 }
 .switch-thumb {
   position: absolute;
@@ -321,7 +331,6 @@ body {
   width: 20px; height: 20px;
   border-radius: 50%;
   background: var(--text-faint);
-  transition: all 0.2s;
 }
 .switch-row input:checked + .switch-track { background: var(--accent-gradient); }
 .switch-row input:checked + .switch-track .switch-thumb { right: 20px; background: #1a0e08; }
@@ -349,10 +358,119 @@ body {
   font-size: 14px;
 }
 .btn-primary { background: var(--accent-gradient); color: #1a0e08; }
-.btn-primary:active { filter: brightness(0.95); }
 .btn-ghost { background: var(--card); color: var(--text-secondary); border: 1px solid var(--card-border); }
 .btn-danger { background: transparent; color: var(--danger); border: 1px solid rgba(255,84,112,0.35); }
-.full-btn { width: 100%; margin-top: 4px; }
+.full-btn { width: 100%; margin-top: 8px; }
+
+/* ===== Progress bar ===== */
+.progress-wrap { margin-top: 12px; }
+.progress-track {
+  height: 8px;
+  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--progress);
+  transition: width 0.15s ease;
+}
+.progress-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  text-align: center;
+}
+
+/* ===== Logo gallery ===== */
+.logo-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+.logo-gallery-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 2px solid var(--card-border);
+}
+.logo-gallery-item.active { border-color: var(--accent-2); }
+.logo-gallery-item img { width: 100%; height: 100%; object-fit: cover; }
+.logo-delete-btn {
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 22px; height: 22px;
+  border-radius: 7px;
+  background: rgba(14,12,20,0.85);
+  border: none;
+  color: var(--danger);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ===== Colors list ===== */
+.colors-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.color-row-label { font-size: 13px; color: var(--text-secondary); }
+.color-row input[type="color"] {
+  width: 40px; height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  padding: 0;
+}
+
+/* ===== Texts list ===== */
+.texts-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; max-height: 50vh; overflow-y: auto; }
+.text-row { padding: 4px 0; }
+.text-row .field-label { margin: 10px 0 4px; font-family: monospace; font-size: 11px; opacity: 0.7; }
+
+/* ===== Statuses list ===== */
+.statuses-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-row .text-field { flex: 1; padding: 9px 12px; font-size: 13px; }
+.status-color-input {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  padding: 0;
+  flex-shrink: 0;
+}
+.status-delete-btn {
+  width: 36px; height: 36px;
+  border-radius: 9px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--danger);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.new-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.new-status-row .text-field { flex: 1; }
+.new-status-row .btn { flex-shrink: 0; padding: 10px 16px; font-size: 18px; }
 
 /* ===== Toast ===== */
 .toast {
@@ -368,96 +486,4 @@ body {
   font-size: 13px;
   z-index: 100;
   box-shadow: 0 10px 24px rgba(0,0,0,0.4);
-  animation: toast-in 0.25s ease;
 }
-@keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, 10px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-
-/* ===== معرض صور التطبيق (اللوجو) ===== */
-.logo-gallery {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-top: 14px;
-}
-.logo-gallery-item {
-  position: relative;
-  aspect-ratio: 1;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  border: 2px solid var(--card-border);
-}
-.logo-gallery-item.active { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(255,106,61,0.35); }
-.logo-gallery-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.logo-delete-btn {
-  position: absolute;
-  top: 4px; left: 4px;
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: rgba(5,4,8,0.75);
-  border: 1px solid rgba(255,255,255,0.15);
-  color: #fff;
-  font-size: 12px;
-  display: flex; align-items: center; justify-content: center;
-}
-
-/* ===== قائمة تعديل الألوان ===== */
-.colors-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-}
-.color-row {
-  display: grid;
-  grid-template-columns: 1fr 38px 90px;
-  align-items: center;
-  gap: 8px;
-}
-.color-row-label {
-  font-size: 12.5px;
-  color: var(--text-secondary);
-}
-.color-swatch {
-  width: 38px; height: 38px;
-  border-radius: 10px;
-  border: 1px solid var(--card-border);
-  background: transparent;
-  padding: 0;
-}
-.color-hex {
-  padding: 8px 10px;
-  font-size: 12px;
-  text-align: center;
-}
-
-/* ===== مسار الملف عند الاستيراد ===== */
-.path-row {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-.path-row .text-field { flex: 1; }
-.path-row .btn { white-space: nowrap; }
-
-/* ===== زرار اختيار ملف بشكل التطبيق (بدل الافتراضي الأبيض) ===== */
-.file-picker-btn {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm);
-  border: 1.5px dashed var(--card-border);
-  background: var(--card);
-  color: var(--text-secondary);
-  font-family: 'Tajawal', sans-serif;
-  font-size: 13.5px;
-  cursor: pointer;
-}
-.file-picker-btn svg { color: var(--accent-2); flex-shrink: 0; }
-.file-picker-btn:active { background: var(--bg-elevated); }
