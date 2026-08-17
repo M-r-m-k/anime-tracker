@@ -60,23 +60,18 @@ function dbClearAll() {
 }
 
 // إضافة عناصر على دفعات صغيرة عشان الأجهزة الضعيفة تستحمل، مع استراحة بين كل دفعة
-// وتقرير نسبة التقدم لعرضها في شريط التحميل
-function dbBulkPutBatched(items, batchSize = 25, onProgress) {
+function dbBulkPutBatched(items, batchSize = 25) {
   return new Promise((resolve, reject) => {
     let i = 0;
     function nextBatch() {
-      if (i >= items.length) {
-        if (onProgress) onProgress(items.length, items.length);
-        resolve();
-        return;
-      }
+      if (i >= items.length) { resolve(); return; }
       const batch = items.slice(i, i + batchSize);
       const tx = db.transaction(STORE, "readwrite");
       const store = tx.objectStore(STORE);
       batch.forEach((it) => store.put(it));
       tx.oncomplete = () => {
         i += batchSize;
-        if (onProgress) onProgress(Math.min(i, items.length), items.length);
+        // نسيب فرصة للمتصفح "يلحق نفسه" قبل الدفعة اللي بعدها
         setTimeout(nextBatch, 30);
       };
       tx.onerror = (e) => reject(e);
@@ -85,7 +80,7 @@ function dbBulkPutBatched(items, batchSize = 25, onProgress) {
   });
 }
 
-/* ---- إعدادات التطبيق (اسم / صورة / معرض / ألوان / نصوص / حالات) ---- */
+/* ---- إعدادات التطبيق (اسم / صورة / معرض / ألوان) ---- */
 function dbSettingsGetAll() {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(SETTINGS_STORE, "readonly");
@@ -123,7 +118,21 @@ function dbSettingsBulkPut(entries) {
   });
 }
 
-/* ============ القيم الافتراضية ============ */
+/* ============ حالة التطبيق ============ */
+let animeList = [];
+let editMode = false;
+let currentEditId = null;
+let pickedImageDataUrl = null;
+
+const statusLabels = {
+  "": "بدون حالة",
+  finished_watched: "منتهي - تمت مشاهدته",
+  finished_boring: "منتهي - ومملّ",
+  ecchi_finished: "إيتشي - منتهي",
+  ecchi_unwatched: "إيتشي - لم يُشاهد",
+  unwatched: "لم تتم مشاهدته",
+};
+
 const DEFAULT_COLORS = {
   "--bg": "#0e0c14",
   "--bg-elevated": "#17141f",
@@ -137,7 +146,6 @@ const DEFAULT_COLORS = {
   "--accent-3": "#ff3d77",
   "--success": "#34d399",
   "--danger": "#ff5470",
-  "--progress": "#3b82f6",
 };
 
 const COLOR_LABELS = {
@@ -153,115 +161,17 @@ const COLOR_LABELS = {
   "--accent-3": "لون مميز 3 (نهاية التدرج)",
   "--success": "لون النجاح",
   "--danger": "لون الخطر/الحذف",
-  "--progress": "لون شريط التحميل",
 };
 
-const DEFAULT_STATUSES = [
-  { key: "finished_watched", label: "منتهي - تمت مشاهدته", color: "#34d399" },
-  { key: "finished_boring", label: "منتهي - وممل، لن يتم تحميله مرة أخرى", color: "#9691ac" },
-  { key: "ecchi_finished", label: "إيتشي - منتهي", color: "#ff3d77" },
-  { key: "ecchi_unwatched", label: "إيتشي - لم يُشاهد", color: "#ff6a3d" },
-  { key: "unwatched", label: "لم تتم مشاهدته", color: "#ffb648" },
-];
-
-const DEFAULT_TEXTS = {
-  search_placeholder: "ابحث عن أنمي...",
-  empty_title: "لسه مفيش أي أنمي مضاف",
-  empty_subtitle: "افتح وضع التعديل وضيف أول عنصر",
-  menu_edit: "تعديل",
-  menu_edit_done: "إنهاء التعديل",
-  menu_change_logo: "تغيير صورة التطبيق",
-  menu_change_name: "تغيير اسم التطبيق",
-  menu_edit_colors: "تعديل الألوان",
-  menu_edit_texts: "تعديل النصوص",
-  menu_edit_statuses: "تعديل الحالات",
-  menu_export: "تصدير نسخة احتياطية",
-  menu_import: "استيراد نسخة احتياطية",
-  status_all: "الكل",
-  status_none: "بدون حالة",
-  field_label_image: "صورة الغلاف",
-  image_picker_placeholder: "دوس لاختيار صورة",
-  field_label_name: "الاسم",
-  field_name_placeholder: "اسم الأنمي",
-  field_label_status: "الحالة",
-  btn_delete: "حذف",
-  btn_cancel: "إلغاء",
-  btn_save: "حفظ",
-  btn_close: "إغلاق",
-  btn_reset_default: "استرجاع الافتراضي",
-  btn_choose_file: "اختيار ملف",
-  btn_import: "استيراد",
-  btn_upload_new_image: "رفع صورة جديدة",
-  modal_add_title: "إضافة أنمي",
-  modal_edit_title: "تعديل الأنمي",
-  logo_modal_title: "تغيير صورة التطبيق",
-  logo_modal_desc: "ارفع صورة أو أكتر، وادوس على أي صورة عشان تخليها صورة التطبيق الحالية. باقي الصور بتفضل محفوظة تقدر ترجعلها تاني وقت ما تحب.",
-  name_modal_title: "تغيير اسم التطبيق",
-  field_label_new_name: "الاسم الجديد",
-  colors_modal_title: "تعديل الألوان",
-  colors_modal_desc: "أي تغيير بيتطبق فورًا. لما تخلص دوس حفظ عشان يتثبت.",
-  texts_modal_title: "تعديل النصوص",
-  texts_modal_desc: "غيّر أي نص ظاهر في التطبيق زي ما تحب. الحفظ بيتطبق فورًا.",
-  statuses_modal_title: "تعديل الحالات",
-  statuses_modal_desc: "تقدر تحذف أي حالة أو تضيف حالة جديدة بلونها الخاص.",
-  field_label_new_status: "إضافة حالة جديدة",
-  field_new_status_placeholder: "اسم الحالة الجديدة",
-  export_modal_title: "تصدير نسخة احتياطية",
-  export_modal_desc: "هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.",
-  export_encrypt_label: "تشفير الملف بكلمة سر",
-  export_password_warning: "⚠️ لو نسيت كلمة السر، مش هيبقى فيه طريقة لاسترجاع البيانات.",
-  export_confirm_btn: "تصدير الآن",
-  field_label_password: "كلمة السر",
-  field_password_placeholder: "اكتب كلمة سر قوية",
-  field_label_password_confirm: "تأكيد كلمة السر",
-  field_password_confirm_placeholder: "اكتب كلمة السر تاني",
-  field_import_password_placeholder: "اكتب كلمة سر الملف",
-  import_modal_title: "استيراد نسخة احتياطية",
-  import_modal_desc: "هيتم استبدال كل البيانات الحالية بالبيانات اللي في الملف.",
-  field_label_choose_file: "اختار الملف من الجهاز",
-  toast_saved: "تم الحفظ ✅",
-  toast_deleted: "تم الحذف 🗑️",
-  toast_name_saved: "تم تغيير الاسم ✅",
-  toast_colors_saved: "تم حفظ الألوان ✅",
-  toast_colors_reset: "رجعنا الألوان الافتراضية",
-  toast_texts_saved: "تم حفظ النصوص ✅",
-  toast_texts_reset: "رجعنا النصوص الافتراضية",
-  toast_status_added: "تمت إضافة الحالة ✅",
-  toast_status_deleted: "تم حذف الحالة 🗑️",
-  toast_images_uploaded: "تم رفع الصور ✅",
-  toast_logo_changed: "اتغيرت صورة التطبيق ✅",
-  toast_export_done: "تم تصدير الملف ✅",
-  toast_name_missing: "اكتب الاسم الأول",
-  toast_status_name_missing: "اكتب اسم الحالة الأول",
-  toast_image_error: "حصلت مشكلة في تحميل الصورة",
-  toast_images_error: "حصلت مشكلة أثناء رفع الصور",
-  toast_password_short: "كلمة السر لازم تكون 4 حروف على الأقل",
-  toast_password_mismatch: "كلمتا السر مش متطابقتين",
-  toast_choose_file_first: "اختار ملف الأول",
-  import_error_generic: "كلمة السر غلط أو الملف تالف أو حصلت مشكلة أثناء الاستيراد — البيانات القديمة اتحافظ عليها",
-  import_error_invalid_file: "الملف ده تالف أو مش بصيغة صحيحة",
-  import_error_password_needed: "الملف محمي بكلمة سر، اكتبها الأول",
-};
-
-const DEFAULT_APP_NAME = "Animelist";
+const DEFAULT_APP_NAME = "قائمة الأنمي";
 
 // الإعدادات الحالية في الذاكرة
 let appSettings = {
   appName: DEFAULT_APP_NAME,
-  logo: null,
-  gallery: [],
+  logo: null, // data URL للصورة المختارة كصورة تطبيق
+  gallery: [], // كل الصور المرفوعة
   colors: { ...DEFAULT_COLORS },
-  texts: { ...DEFAULT_TEXTS },
-  statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
 };
-
-/* ============ حالة التطبيق ============ */
-let animeList = [];
-let editMode = false;
-let currentEditId = null;
-let pickedImageDataUrl = null;
-let selectedAnimeStatus = "";
-let selectedFilterStatus = "";
 
 /* ============ عناصر DOM ============ */
 const grid = document.getElementById("grid");
@@ -272,148 +182,46 @@ const dropdownMenu = document.getElementById("dropdownMenu");
 const toggleEditBtn = document.getElementById("toggleEditBtn");
 const toggleEditLabel = document.getElementById("toggleEditLabel");
 const searchInput = document.getElementById("searchInput");
-const filterSegments = document.getElementById("filterSegments");
+const filterSelect = document.getElementById("filterSelect");
 const appTitleEl = document.getElementById("appTitle");
 const logoDotEl = document.getElementById("logoDot");
 
-/* ============ دالة الترجمة/النصوص القابلة للتعديل ============ */
-function t(key) {
-  return (appSettings.texts && appSettings.texts[key]) ?? DEFAULT_TEXTS[key] ?? key;
-}
-
-function applyTexts() {
-  document.querySelectorAll("[data-text-key]").forEach((el) => {
-    el.textContent = t(el.dataset.textKey);
-  });
-  document.querySelectorAll("[data-text-placeholder-key]").forEach((el) => {
-    el.placeholder = t(el.dataset.textPlaceholderKey);
-  });
-  toggleEditLabel.textContent = editMode ? t("menu_edit_done") : t("menu_edit");
-}
-
-/* ============ تصغير وضغط الصور قبل التخزين ============ */
-function resizeImageFile(file, maxWidth = 480, quality = 0.72, onProgress) {
-  return new Promise((resolve, reject) => {
-    if (onProgress) onProgress(15, "جاري القراءة...");
-    const img = new Image();
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (onProgress) onProgress(50, "جاري المعالجة...");
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxWidth) {
-          height = Math.round((maxWidth / width) * height);
-          width = maxWidth;
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        if (onProgress) onProgress(90, "جاري الحفظ...");
-        const result = canvas.toDataURL("image/jpeg", quality);
-        if (onProgress) onProgress(100, "تم ✅");
-        resolve(result);
-      };
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-/* ============ شريط التقدم (Progress Bar) ============ */
-function setProgress(prefix, percent, label) {
-  const wrap = document.getElementById(prefix + "ProgressWrap");
-  const fill = document.getElementById(prefix + "ProgressFill");
-  const lbl = document.getElementById(prefix + "ProgressLabel");
-  if (!wrap) return;
-  wrap.classList.remove("hidden");
-  const p = Math.min(100, Math.max(0, percent));
-  fill.style.width = p + "%";
-  lbl.textContent = label || `${Math.round(p)}%`;
-}
-function hideProgress(prefix) {
-  const wrap = document.getElementById(prefix + "ProgressWrap");
-  if (wrap) wrap.classList.add("hidden");
-}
-
-/* ============ تطبيق الألوان على الواجهة ============ */
-function applyColorsToUI() {
-  const root = document.documentElement;
-  Object.entries(appSettings.colors).forEach(([key, value]) => {
-    root.style.setProperty(key, value);
-  });
-}
-
-function applyAppIdentity() {
-  appTitleEl.textContent = appSettings.appName || DEFAULT_APP_NAME;
-  if (appSettings.logo) {
-    logoDotEl.style.background = `url(${appSettings.logo}) center/cover`;
-    logoDotEl.style.boxShadow = "none";
-  } else {
-    logoDotEl.style.background = "";
-    logoDotEl.style.boxShadow = "";
-  }
-}
-
-/* ============ تحميل الإعدادات من القاعدة مع دمج القيم الافتراضية ============ */
-async function loadAppSettingsFromDB() {
-  const rows = await dbSettingsGetAll();
-  const map = {};
-  rows.forEach((r) => { map[r.key] = r.value; });
-
-  appSettings = {
-    appName: map.appName ?? DEFAULT_APP_NAME,
-    logo: map.logo ?? null,
-    gallery: map.gallery ?? [],
-    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
-    texts: { ...DEFAULT_TEXTS, ...(map.texts || {}) },
-    statuses: (map.statuses && map.statuses.length ? map.statuses : DEFAULT_STATUSES).map((s) => ({ ...s })),
-  };
-
-  applyColorsToUI();
-  applyAppIdentity();
-  applyTexts();
-}
-
 /* ============ عرض القائمة ============ */
-function getStatusMeta(key) {
-  if (!key) return { label: t("status_none"), color: "var(--text-faint)" };
-  const found = appSettings.statuses.find((s) => s.key === key);
-  return found ? { label: found.label, color: found.color } : { label: t("status_none"), color: "var(--text-faint)" };
-}
-
 function render() {
   const query = searchInput.value.trim().toLowerCase();
+  const statusFilter = filterSelect.value;
 
   const filtered = animeList
     .filter((a) => (query ? a.name.toLowerCase().includes(query) : true))
-    .filter((a) => (selectedFilterStatus ? a.status === selectedFilterStatus : true))
+    .filter((a) => (statusFilter ? a.status === statusFilter : true))
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   grid.innerHTML = "";
-  emptyState.classList.toggle("hidden", filtered.length !== 0);
+
+  if (filtered.length === 0) {
+    emptyState.classList.remove("hidden");
+  } else {
+    emptyState.classList.add("hidden");
+  }
 
   filtered.forEach((anime) => {
     const card = document.createElement("div");
     card.className = "card";
-    const meta = getStatusMeta(anime.status);
+
+    const statusKey = anime.status || "empty";
+    const statusText = statusLabels[anime.status] || "بدون حالة";
 
     card.innerHTML = `
       <div class="card-image-wrap">
         ${
           anime.image
-            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" loading="lazy" decoding="async" />`
-            : `<div class="no-image"><svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
+            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" />`
+            : `<div class="no-image"><svg viewBox="0 0 24 24" width="34" height="34"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
         }
-        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
+        <div class="status-chip st-${statusKey}">${statusText}</div>
+        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
       </div>
-      <div class="card-info">
-        <div class="card-title">${escapeHtml(anime.name)}</div>
-        <div class="status-chip" style="color:${meta.color};border-color:${hexToRgba(meta.color, 0.4)};background:${hexToRgba(meta.color, 0.1)};">${escapeHtml(meta.label)}</div>
-      </div>
+      <div class="card-title">${escapeHtml(anime.name)}</div>
     `;
 
     if (editMode) {
@@ -435,10 +243,10 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+const statusCycleOrder = ["", "unwatched", "finished_watched", "finished_boring", "ecchi_unwatched", "ecchi_finished"];
 async function quickStatusCycle(anime) {
-  const order = ["", ...appSettings.statuses.map((s) => s.key)];
-  const idx = order.indexOf(anime.status || "");
-  const next = order[(idx + 1) % order.length];
+  const idx = statusCycleOrder.indexOf(anime.status || "");
+  const next = statusCycleOrder[(idx + 1) % statusCycleOrder.length];
   anime.status = next;
   await dbPut(anime);
   render();
@@ -447,71 +255,16 @@ async function quickStatusCycle(anime) {
 /* ============ وضع التعديل ============ */
 function setEditMode(value) {
   editMode = value;
-  toggleEditLabel.textContent = editMode ? t("menu_edit_done") : t("menu_edit");
+  toggleEditLabel.textContent = editMode ? "إنهاء التعديل" : "تعديل";
   fabAdd.classList.toggle("hidden", !editMode);
   render();
-}
-
-/* ============ عنصر واجهة الشرائح الملونة (Segmented Control) ============ */
-function hexToRgba(hex, alpha) {
-  if (!hex || !hex.startsWith("#")) return `rgba(99,93,120,${alpha})`;
-  let c = hex.slice(1);
-  if (c.length === 3) c = c.split("").map((ch) => ch + ch).join("");
-  const num = parseInt(c, 16);
-  const r = (num >> 16) & 255;
-  const g = (num >> 8) & 255;
-  const b = num & 255;
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function renderSegmented(container, options, selectedKey, onSelect) {
-  container.innerHTML = "";
-  options.forEach((opt) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    const isActive = opt.key === selectedKey;
-    chip.className = "seg-chip" + (isActive ? " active" : "");
-    if (isActive) {
-      chip.style.background = opt.color;
-      chip.style.color = "#0e0c14";
-      chip.style.borderColor = opt.color;
-    } else {
-      chip.style.background = hexToRgba(opt.color, 0.12);
-      chip.style.color = opt.color;
-      chip.style.borderColor = hexToRgba(opt.color, 0.45);
-    }
-    chip.textContent = opt.label;
-    chip.addEventListener("click", () => onSelect(opt.key));
-    container.appendChild(chip);
-  });
-}
-
-function getStatusOptions(includeAll) {
-  const base = appSettings.statuses.map((s) => ({ key: s.key, label: s.label, color: s.color }));
-  const none = { key: "", label: includeAll ? t("status_all") : t("status_none"), color: "#635d78" };
-  return [none, ...base];
-}
-
-function renderFilterSegments() {
-  renderSegmented(filterSegments, getStatusOptions(true), selectedFilterStatus, (key) => {
-    selectedFilterStatus = key;
-    renderFilterSegments();
-    render();
-  });
-}
-
-function renderAnimeStatusSegments() {
-  const container = document.getElementById("statusSegments");
-  renderSegmented(container, getStatusOptions(false), selectedAnimeStatus, (key) => {
-    selectedAnimeStatus = key;
-    renderAnimeStatusSegments();
-  });
 }
 
 /* ============ مودال إضافة / تعديل أنمي ============ */
 const animeModalOverlay = document.getElementById("animeModalOverlay");
 const animeModalTitle = document.getElementById("animeModalTitle");
 const nameInput = document.getElementById("nameInput");
+const statusInput = document.getElementById("statusInput");
 const imageInput = document.getElementById("imageInput");
 const imagePicker = document.getElementById("imagePicker");
 const imagePreview = document.getElementById("imagePreview");
@@ -521,13 +274,12 @@ const deleteAnimeBtn = document.getElementById("deleteAnimeBtn");
 function openAnimeModal(id = null) {
   currentEditId = id;
   pickedImageDataUrl = null;
-  hideProgress("image");
 
   if (id) {
     const anime = animeList.find((a) => a.id === id);
-    animeModalTitle.textContent = t("modal_edit_title");
+    animeModalTitle.textContent = "تعديل الأنمي";
     nameInput.value = anime.name;
-    selectedAnimeStatus = anime.status || "";
+    statusInput.value = anime.status || "";
     if (anime.image) {
       imagePreview.src = anime.image;
       imagePreview.classList.remove("hidden");
@@ -538,15 +290,14 @@ function openAnimeModal(id = null) {
     }
     deleteAnimeBtn.classList.remove("hidden");
   } else {
-    animeModalTitle.textContent = t("modal_add_title");
+    animeModalTitle.textContent = "إضافة أنمي";
     nameInput.value = "";
-    selectedAnimeStatus = "";
+    statusInput.value = "";
     imagePreview.classList.add("hidden");
     imagePlaceholder.classList.remove("hidden");
     deleteAnimeBtn.classList.add("hidden");
   }
 
-  renderAnimeStatusSegments();
   animeModalOverlay.classList.remove("hidden");
 }
 
@@ -558,41 +309,37 @@ function closeAnimeModal() {
 
 imagePicker.addEventListener("click", () => imageInput.click());
 
-imageInput.addEventListener("change", async () => {
+imageInput.addEventListener("change", () => {
   const file = imageInput.files[0];
   if (!file) return;
-  try {
-    pickedImageDataUrl = await resizeImageFile(file, 480, 0.72, (p, label) => {
-      setProgress("image", p, label);
-    });
+  const reader = new FileReader();
+  reader.onload = () => {
+    pickedImageDataUrl = reader.result;
     imagePreview.src = pickedImageDataUrl;
     imagePreview.classList.remove("hidden");
     imagePlaceholder.classList.add("hidden");
-    setTimeout(() => hideProgress("image"), 500);
-  } catch (e) {
-    hideProgress("image");
-    showToast(t("toast_image_error"));
-  }
+  };
+  reader.readAsDataURL(file);
 });
 
 document.getElementById("saveAnimeBtn").addEventListener("click", async () => {
   const name = nameInput.value.trim();
   if (!name) {
-    showToast(t("toast_name_missing"));
+    showToast("اكتب اسم الأنمي الأول");
     return;
   }
 
   if (currentEditId) {
     const anime = animeList.find((a) => a.id === currentEditId);
     anime.name = name;
-    anime.status = selectedAnimeStatus;
+    anime.status = statusInput.value;
     if (pickedImageDataUrl) anime.image = pickedImageDataUrl;
     await dbPut(anime);
   } else {
     const newItem = {
       id: "a_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
       name,
-      status: selectedAnimeStatus,
+      status: statusInput.value,
       image: pickedImageDataUrl || null,
       order: animeList.length,
       createdAt: Date.now(),
@@ -603,7 +350,7 @@ document.getElementById("saveAnimeBtn").addEventListener("click", async () => {
 
   await reloadFromDB();
   closeAnimeModal();
-  showToast(t("toast_saved"));
+  showToast("تم الحفظ ✅");
 });
 
 document.getElementById("cancelAnimeBtn").addEventListener("click", closeAnimeModal);
@@ -613,7 +360,7 @@ deleteAnimeBtn.addEventListener("click", async () => {
   await dbDelete(currentEditId);
   await reloadFromDB();
   closeAnimeModal();
-  showToast(t("toast_deleted"));
+  showToast("تم الحذف 🗑️");
 });
 
 fabAdd.addEventListener("click", () => openAnimeModal(null));
@@ -635,11 +382,8 @@ toggleEditBtn.addEventListener("click", () => {
 });
 
 /* ============ البحث والفلترة ============ */
-let searchDebounceTimer;
-searchInput.addEventListener("input", () => {
-  clearTimeout(searchDebounceTimer);
-  searchDebounceTimer = setTimeout(render, 220);
-});
+searchInput.addEventListener("input", render);
+filterSelect.addEventListener("change", render);
 
 /* ============ توست ============ */
 let toastTimer;
@@ -657,8 +401,50 @@ async function reloadFromDB() {
   render();
 }
 
-/* ============ مودال صورة التطبيق ============ */
+/* ================================================================
+   إعدادات التطبيق: صورة/اسم/ألوان
+   ================================================================ */
+function applyAppSettingsToUI() {
+  appTitleEl.textContent = appSettings.appName || DEFAULT_APP_NAME;
+  document.title = appSettings.appName || DEFAULT_APP_NAME;
+
+  if (appSettings.logo) {
+    logoDotEl.outerHTML = `<img id="logoDot" class="logo-img" src="${appSettings.logo}" alt="logo" />`;
+  } else {
+    const current = document.getElementById("logoDot");
+    if (current.tagName === "IMG") {
+      current.outerHTML = `<span id="logoDot" class="logo-dot"></span>`;
+    }
+  }
+
+  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
+  Object.keys(colors).forEach((varName) => {
+    document.documentElement.style.setProperty(varName, colors[varName]);
+  });
+}
+
+async function loadAppSettingsFromDB() {
+  const rows = await dbSettingsGetAll();
+  const map = {};
+  rows.forEach((r) => { map[r.key] = r.value; });
+
+  appSettings = {
+    appName: map.appName || DEFAULT_APP_NAME,
+    logo: map.logo || null,
+    gallery: map.gallery || [],
+    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
+  };
+  applyAppSettingsToUI();
+}
+
+async function saveAppSettingKey(key, value) {
+  appSettings[key] = value;
+  await dbSettingsPut(key, value);
+}
+
+/* ---- مودال صورة التطبيق ---- */
 const logoModalOverlay = document.getElementById("logoModalOverlay");
+const uploadLogoBtn = document.getElementById("uploadLogoBtn");
 const logoImageInput = document.getElementById("logoImageInput");
 const logoGallery = document.getElementById("logoGallery");
 
@@ -670,72 +456,69 @@ document.getElementById("changeLogoBtn").addEventListener("click", () => {
 document.getElementById("closeLogoModalBtn").addEventListener("click", () => {
   logoModalOverlay.classList.add("hidden");
 });
-document.getElementById("uploadLogoBtn").addEventListener("click", () => logoImageInput.click());
+
+uploadLogoBtn.addEventListener("click", () => logoImageInput.click());
+
+logoImageInput.addEventListener("change", async () => {
+  const files = Array.from(logoImageInput.files || []);
+  if (files.length === 0) return;
+
+  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const newImages = await Promise.all(files.map(readAsDataUrl));
+  appSettings.gallery = [...appSettings.gallery, ...newImages];
+  await dbSettingsPut("gallery", appSettings.gallery);
+  renderLogoGallery();
+  logoImageInput.value = "";
+  showToast("تم رفع الصور ✅");
+});
 
 function renderLogoGallery() {
   logoGallery.innerHTML = "";
+  if (appSettings.gallery.length === 0) {
+    logoGallery.innerHTML = `<p class="hint-text">لسه مفيش صور مرفوعة.</p>`;
+    return;
+  }
   appSettings.gallery.forEach((imgSrc, idx) => {
     const item = document.createElement("div");
-    item.className = "logo-gallery-item" + (appSettings.logo === imgSrc ? " active" : "");
+    item.className = "logo-gallery-item" + (imgSrc === appSettings.logo ? " active" : "");
     item.innerHTML = `
-      <img src="${imgSrc}" alt="logo option" loading="lazy" decoding="async" />
-      <button class="logo-delete-btn" data-idx="${idx}">
-        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-      </button>
+      <img src="${imgSrc}" alt="logo option" />
+      <button class="logo-delete-btn" data-idx="${idx}" aria-label="حذف">✕</button>
     `;
     item.querySelector("img").addEventListener("click", async () => {
-      appSettings.logo = imgSrc;
-      await dbSettingsPut("logo", appSettings.logo);
-      applyAppIdentity();
+      await saveAppSettingKey("logo", imgSrc);
+      applyAppSettingsToUI();
       renderLogoGallery();
-      showToast(t("toast_logo_changed"));
+      showToast("اتغيرت صورة التطبيق ✅");
     });
     item.querySelector(".logo-delete-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
+      const wasActive = appSettings.gallery[idx] === appSettings.logo;
       appSettings.gallery.splice(idx, 1);
-      if (appSettings.logo === imgSrc) appSettings.logo = null;
       await dbSettingsPut("gallery", appSettings.gallery);
-      await dbSettingsPut("logo", appSettings.logo);
-      applyAppIdentity();
+      if (wasActive) {
+        await saveAppSettingKey("logo", null);
+        applyAppSettingsToUI();
+      }
       renderLogoGallery();
     });
     logoGallery.appendChild(item);
   });
 }
 
-logoImageInput.addEventListener("change", async () => {
-  const files = Array.from(logoImageInput.files || []);
-  if (files.length === 0) return;
-
-  try {
-    const newImages = [];
-    for (let i = 0; i < files.length; i++) {
-      const base = (i / files.length) * 100;
-      const img = await resizeImageFile(files[i], 480, 0.72, (p) => {
-        setProgress("logo", base + p / files.length, `جاري رفع ${i + 1}/${files.length}...`);
-      });
-      newImages.push(img);
-    }
-    appSettings.gallery = [...appSettings.gallery, ...newImages];
-    await dbSettingsPut("gallery", appSettings.gallery);
-    renderLogoGallery();
-    logoImageInput.value = "";
-    setProgress("logo", 100, "تم ✅");
-    setTimeout(() => hideProgress("logo"), 500);
-    showToast(t("toast_images_uploaded"));
-  } catch (e) {
-    hideProgress("logo");
-    showToast(t("toast_images_error"));
-  }
-});
-
-/* ============ مودال اسم التطبيق ============ */
+/* ---- مودال اسم التطبيق ---- */
 const nameModalOverlay = document.getElementById("nameModalOverlay");
 const appNameInput = document.getElementById("appNameInput");
 
 document.getElementById("changeNameBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
-  appNameInput.value = appSettings.appName;
+  appNameInput.value = appSettings.appName || DEFAULT_APP_NAME;
   nameModalOverlay.classList.remove("hidden");
 });
 document.getElementById("cancelNameBtn").addEventListener("click", () => {
@@ -744,176 +527,76 @@ document.getElementById("cancelNameBtn").addEventListener("click", () => {
 document.getElementById("saveNameBtn").addEventListener("click", async () => {
   const newName = appNameInput.value.trim();
   if (!newName) {
-    showToast(t("toast_name_missing"));
+    showToast("اكتب اسم الأول");
     return;
   }
-  appSettings.appName = newName;
-  await dbSettingsPut("appName", newName);
-  applyAppIdentity();
+  await saveAppSettingKey("appName", newName);
+  applyAppSettingsToUI();
   nameModalOverlay.classList.add("hidden");
-  showToast(t("toast_name_saved"));
+  showToast("تم تغيير الاسم ✅");
 });
 
-/* ============ مودال تعديل الألوان ============ */
+/* ---- مودال تعديل الألوان ---- */
 const colorsModalOverlay = document.getElementById("colorsModalOverlay");
 const colorsList = document.getElementById("colorsList");
-let tempColors = {};
 
 document.getElementById("editColorsBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
-  tempColors = { ...appSettings.colors };
   renderColorsList();
   colorsModalOverlay.classList.remove("hidden");
 });
 
 function renderColorsList() {
   colorsList.innerHTML = "";
-  Object.keys(DEFAULT_COLORS).forEach((key) => {
+  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
+  Object.keys(DEFAULT_COLORS).forEach((varName) => {
     const row = document.createElement("div");
     row.className = "color-row";
     row.innerHTML = `
-      <span class="color-row-label">${COLOR_LABELS[key] || key}</span>
-      <input type="color" value="${tempColors[key]}" data-key="${key}" />
+      <span class="color-row-label">${COLOR_LABELS[varName] || varName}</span>
+      <input type="color" class="color-swatch" data-var="${varName}" value="${colors[varName]}" />
+      <input type="text" class="color-hex text-field" data-var="${varName}" value="${colors[varName]}" />
     `;
-    row.querySelector("input").addEventListener("input", (e) => {
-      tempColors[key] = e.target.value;
-      document.documentElement.style.setProperty(key, e.target.value);
+    const swatch = row.querySelector(".color-swatch");
+    const hex = row.querySelector(".color-hex");
+    swatch.addEventListener("input", () => {
+      hex.value = swatch.value;
+      document.documentElement.style.setProperty(varName, swatch.value);
+    });
+    hex.addEventListener("input", () => {
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex.value)) {
+        swatch.value = hex.value.length === 4
+          ? "#" + [...hex.value.slice(1)].map((c) => c + c).join("")
+          : hex.value;
+        document.documentElement.style.setProperty(varName, hex.value);
+      }
     });
     colorsList.appendChild(row);
   });
 }
 
 document.getElementById("saveColorsBtn").addEventListener("click", async () => {
-  appSettings.colors = { ...tempColors };
-  await dbSettingsPut("colors", appSettings.colors);
+  const newColors = {};
+  colorsList.querySelectorAll(".color-hex").forEach((input) => {
+    newColors[input.dataset.var] = input.value;
+  });
+  await saveAppSettingKey("colors", newColors);
   colorsModalOverlay.classList.add("hidden");
-  showToast(t("toast_colors_saved"));
+  showToast("تم حفظ الألوان ✅");
 });
 
-document.getElementById("resetColorsBtn").addEventListener("click", () => {
-  tempColors = { ...DEFAULT_COLORS };
-  applyColorsPreview();
+document.getElementById("resetColorsBtn").addEventListener("click", async () => {
+  await saveAppSettingKey("colors", { ...DEFAULT_COLORS });
+  applyAppSettingsToUI();
   renderColorsList();
-  showToast(t("toast_colors_reset"));
+  showToast("رجعنا الألوان الافتراضية");
 });
 
-function applyColorsPreview() {
-  Object.entries(tempColors).forEach(([key, value]) => {
-    document.documentElement.style.setProperty(key, value);
+// إغلاق المودالات الجديدة بالدوس برة (بنفس سلوك باقي المودالات)
+[logoModalOverlay, nameModalOverlay, colorsModalOverlay].forEach((overlay) => {
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.classList.add("hidden");
   });
-}
-
-/* ============ مودال تعديل النصوص ============ */
-const textsModalOverlay = document.getElementById("textsModalOverlay");
-const textsList = document.getElementById("textsList");
-let tempTexts = {};
-
-const TEXT_GROUPS_ORDER = Object.keys(DEFAULT_TEXTS);
-
-document.getElementById("editTextsBtn").addEventListener("click", () => {
-  dropdownMenu.classList.add("hidden");
-  tempTexts = { ...appSettings.texts };
-  renderTextsList();
-  textsModalOverlay.classList.remove("hidden");
-});
-
-function renderTextsList() {
-  textsList.innerHTML = "";
-  TEXT_GROUPS_ORDER.forEach((key) => {
-    const row = document.createElement("div");
-    row.className = "text-row";
-    row.innerHTML = `
-      <label class="field-label">${key}</label>
-      <input type="text" class="text-field" value="${escapeHtml(tempTexts[key] ?? "")}" data-key="${key}" />
-    `;
-    row.querySelector("input").addEventListener("input", (e) => {
-      tempTexts[key] = e.target.value;
-    });
-    textsList.appendChild(row);
-  });
-}
-
-document.getElementById("saveTextsBtn").addEventListener("click", async () => {
-  appSettings.texts = { ...tempTexts };
-  await dbSettingsPut("texts", appSettings.texts);
-  applyTexts();
-  renderFilterSegments();
-  textsModalOverlay.classList.add("hidden");
-  showToast(t("toast_texts_saved"));
-});
-
-document.getElementById("resetTextsBtn").addEventListener("click", () => {
-  tempTexts = { ...DEFAULT_TEXTS };
-  renderTextsList();
-  showToast(t("toast_texts_reset"));
-});
-
-/* ============ مودال تعديل الحالات ============ */
-const statusesModalOverlay = document.getElementById("statusesModalOverlay");
-const statusesList = document.getElementById("statusesList");
-const newStatusColor = document.getElementById("newStatusColor");
-const newStatusLabel = document.getElementById("newStatusLabel");
-
-document.getElementById("editStatusesBtn").addEventListener("click", () => {
-  dropdownMenu.classList.add("hidden");
-  renderStatusesList();
-  statusesModalOverlay.classList.remove("hidden");
-});
-document.getElementById("closeStatusesBtn").addEventListener("click", () => {
-  statusesModalOverlay.classList.add("hidden");
-});
-
-function renderStatusesList() {
-  statusesList.innerHTML = "";
-  appSettings.statuses.forEach((s, idx) => {
-    const row = document.createElement("div");
-    row.className = "status-row";
-    row.innerHTML = `
-      <input type="color" value="${s.color}" data-idx="${idx}" class="status-color-input" />
-      <input type="text" value="${escapeHtml(s.label)}" data-idx="${idx}" class="text-field status-label-input" />
-      <button class="status-delete-btn" data-idx="${idx}">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-      </button>
-    `;
-    row.querySelector(".status-color-input").addEventListener("input", async (e) => {
-      appSettings.statuses[idx].color = e.target.value;
-      await dbSettingsPut("statuses", appSettings.statuses);
-      render();
-    });
-    row.querySelector(".status-label-input").addEventListener("change", async (e) => {
-      appSettings.statuses[idx].label = e.target.value.trim() || s.label;
-      await dbSettingsPut("statuses", appSettings.statuses);
-      render();
-    });
-    row.querySelector(".status-delete-btn").addEventListener("click", async () => {
-      appSettings.statuses.splice(idx, 1);
-      await dbSettingsPut("statuses", appSettings.statuses);
-      renderStatusesList();
-      renderFilterSegments();
-      render();
-      showToast(t("toast_status_deleted"));
-    });
-    statusesList.appendChild(row);
-  });
-}
-
-document.getElementById("addStatusBtn").addEventListener("click", async () => {
-  const label = newStatusLabel.value.trim();
-  if (!label) {
-    showToast(t("toast_status_name_missing"));
-    return;
-  }
-  const newStatus = {
-    key: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
-    label,
-    color: newStatusColor.value,
-  };
-  appSettings.statuses.push(newStatus);
-  await dbSettingsPut("statuses", appSettings.statuses);
-  newStatusLabel.value = "";
-  renderStatusesList();
-  renderFilterSegments();
-  showToast(t("toast_status_added"));
 });
 
 /* ================================================================
@@ -982,7 +665,6 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   exportPasswordWrap.classList.add("hidden");
   exportPassword.value = "";
   exportPasswordConfirm.value = "";
-  hideProgress("export");
   exportModalOverlay.classList.remove("hidden");
 });
 
@@ -999,16 +681,14 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
 
   if (useEncryption) {
     if (exportPassword.value.length < 4) {
-      showToast(t("toast_password_short"));
+      showToast("كلمة السر لازم تكون 4 حروف على الأقل");
       return;
     }
     if (exportPassword.value !== exportPasswordConfirm.value) {
-      showToast(t("toast_password_mismatch"));
+      showToast("كلمتا السر مش متطابقتين");
       return;
     }
   }
-
-  setProgress("export", 10, "جاري تجهيز البيانات...");
 
   const exportData = {
     appName: "anime-tracker",
@@ -1019,17 +699,12 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   };
   const jsonString = JSON.stringify(exportData);
 
-  setProgress("export", 40, "جاري التجهيز...");
-
   let fileContent;
   if (useEncryption) {
-    setProgress("export", 60, "جاري التشفير...");
     fileContent = await encryptJSON(jsonString, exportPassword.value);
   } else {
     fileContent = { encrypted: false, data: jsonString };
   }
-
-  setProgress("export", 85, "جاري حفظ الملف...");
 
   const blob = new Blob([JSON.stringify(fileContent)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1042,17 +717,16 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
-  setProgress("export", 100, "تم ✅");
-  setTimeout(() => {
-    hideProgress("export");
-    exportModalOverlay.classList.add("hidden");
-  }, 500);
-  showToast(t("toast_export_done"));
+  exportModalOverlay.classList.add("hidden");
+  showToast("تم تصدير الملف ✅");
 });
 
 /* ============ مودال الاستيراد ============ */
 const importModalOverlay = document.getElementById("importModalOverlay");
 const importFileInput = document.getElementById("importFileInput");
+const importFileLabel = document.getElementById("importFileLabel");
+const importPathInput = document.getElementById("importPathInput");
+const loadFromPathBtn = document.getElementById("loadFromPathBtn");
 const importPasswordWrap = document.getElementById("importPasswordWrap");
 const importPassword = document.getElementById("importPassword");
 const importError = document.getElementById("importError");
@@ -1061,10 +735,11 @@ let pendingImportPayload = null;
 document.getElementById("importBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
   importFileInput.value = "";
+  importFileLabel.textContent = "اختيار ملف";
+  importPathInput.value = "";
   importPassword.value = "";
   importPasswordWrap.classList.add("hidden");
   importError.classList.add("hidden");
-  hideProgress("import");
   pendingImportPayload = null;
   importModalOverlay.classList.remove("hidden");
 });
@@ -1073,53 +748,65 @@ document.getElementById("cancelImportBtn").addEventListener("click", () => {
   importModalOverlay.classList.add("hidden");
 });
 
-importFileInput.addEventListener("change", async () => {
-  const file = importFileInput.files[0];
-  if (!file) return;
-
-  const sizeMB = file.size / (1024 * 1024);
-  if (sizeMB > 25) {
-    importError.textContent = `الملف حجمه ${sizeMB.toFixed(1)} ميجا، وده كبير على إمكانيات الجهاز وممكن يسبب تهنيج. يفضّل تستخدم ملف أصغر من 25 ميجا.`;
-    importError.classList.remove("hidden");
-  } else {
-    importError.classList.add("hidden");
-  }
-
-  const text = await file.text();
+function parsePendingImportText(text) {
   try {
     pendingImportPayload = JSON.parse(text);
     importPasswordWrap.classList.toggle("hidden", !pendingImportPayload.encrypted);
+    importError.classList.add("hidden");
   } catch (e) {
-    importError.textContent = t("import_error_invalid_file");
+    importError.textContent = "الملف ده تالف أو مش بصيغة صحيحة";
     importError.classList.remove("hidden");
     pendingImportPayload = null;
   }
+}
+
+importFileInput.addEventListener("change", async () => {
+  const file = importFileInput.files[0];
+  if (!file) return;
+  importFileLabel.textContent = file.name;
+  const text = await file.text();
+  parsePendingImportText(text);
 });
 
-// استبدال atomic-ish: بياخد نسخة احتياطية في الذاكرة، ولو فشل أي جزء، بيرجّع القديم
-async function replaceAllDataBatched(newItems, onProgress) {
-  await dbClearAll();
-  await dbBulkPutBatched(newItems, 25, onProgress);
-}
+// تحميل من مسار مكتوب يدويًا (بيشتغل لو التطبيق شغال جوه متصفح عادي بيدعم قراءة ملفات محلية،
+// أو لو اتضاف لاحقًا دعم Capacitor Filesystem. حاليًا: محاولة عبر fetch على مسار file:// كـ fallback)
+loadFromPathBtn.addEventListener("click", async () => {
+  const path = importPathInput.value.trim();
+  if (!path) {
+    showToast("اكتب مسار الملف الأول");
+    return;
+  }
+  try {
+    const normalized = path.startsWith("/") ? "file://" + path : path;
+    const res = await fetch(normalized);
+    if (!res.ok) throw new Error("read failed");
+    const text = await res.text();
+    parsePendingImportText(text);
+    if (pendingImportPayload) showToast("تم تحميل الملف من المسار ✅");
+  } catch (e) {
+    importError.textContent = "معرفناش نقرأ الملف من المسار ده مباشرة على الجهاز ده — استخدم اختيار ملف بدلًا منه";
+    importError.classList.remove("hidden");
+  }
+});
 
 document.getElementById("confirmImportBtn").addEventListener("click", async () => {
   if (!pendingImportPayload) {
-    showToast(t("toast_choose_file_first"));
+    showToast("اختار ملف الأول");
     return;
   }
 
-  const previousItemsSnapshot = animeList.slice();
-  const previousSettingsSnapshot = { ...appSettings };
+  // نسخة احتياطية في الذاكرة من البيانات الحالية، لو حصل فشل نرجعلها بدل ما نمسحها بلا رجعة
+  const previousItems = animeList.slice();
+  const previousSettings = { ...appSettings, colors: { ...appSettings.colors }, gallery: [...appSettings.gallery] };
 
   try {
     let jsonString;
     if (pendingImportPayload.encrypted) {
       if (!importPassword.value) {
-        importError.textContent = t("import_error_password_needed");
+        importError.textContent = "الملف محمي بكلمة سر، اكتبها الأول";
         importError.classList.remove("hidden");
         return;
       }
-      setProgress("import", 10, "جاري فك التشفير...");
       jsonString = await decryptJSON(pendingImportPayload, importPassword.value);
     } else {
       jsonString = pendingImportPayload.data;
@@ -1131,41 +818,35 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
     }
 
     try {
-      await replaceAllDataBatched(parsed.items, (done, total) => {
-        const pct = 15 + (done / total) * 80;
-        setProgress("import", pct, `جاري الاستيراد... ${done}/${total}`);
-      });
+      await dbClearAll();
+      await dbBulkPutBatched(parsed.items, 25);
 
-      // استيراد الإعدادات لو موجودة في الملف
       if (parsed.settings) {
-        const entries = Object.entries(parsed.settings).map(([key, value]) => ({ key, value }));
+        await dbSettingsClearAll();
+        const entries = Object.keys(parsed.settings).map((key) => ({ key, value: parsed.settings[key] }));
         await dbSettingsBulkPut(entries);
       }
-
-      await loadAppSettingsFromDB();
-      await reloadFromDB();
-      renderFilterSegments();
-
-      setProgress("import", 100, "تم ✅");
-      setTimeout(() => {
-        hideProgress("import");
-        importModalOverlay.classList.add("hidden");
-      }, 500);
-      showToast(`${t("toast_saved")} (${parsed.items.length})`);
-    } catch (dbErr) {
-      // فشلت الكتابة، نرجّع القديم
-      hideProgress("import");
-      animeList = previousItemsSnapshot;
-      appSettings = previousSettingsSnapshot;
-      render();
-      applyColorsToUI();
-      applyAppIdentity();
-      applyTexts();
-      throw new Error("db-write-failed");
+    } catch (writeErr) {
+      // فشل أثناء الكتابة: نحاول نرجّع البيانات القديمة زي ما كانت
+      try {
+        await dbClearAll();
+        await dbBulkPutBatched(previousItems, 25);
+        await dbSettingsClearAll();
+        const restoreEntries = Object.keys(previousSettings).map((key) => ({ key, value: previousSettings[key] }));
+        await dbSettingsBulkPut(restoreEntries);
+      } catch (restoreErr) {
+        // لو حتى الاسترجاع فشل، على الأقل مانمسحش المتغيرات في الذاكرة
+      }
+      throw writeErr;
     }
+
+    await reloadFromDB();
+    await loadAppSettingsFromDB();
+
+    importModalOverlay.classList.add("hidden");
+    showToast(`تم استيراد ${parsed.items.length} عنصر ✅`);
   } catch (e) {
-    hideProgress("import");
-    importError.textContent = t("import_error_generic");
+    importError.textContent = "كلمة السر غلط أو الملف تالف أو حصلت مشكلة أثناء الاستيراد — البيانات القديمة اتحافظ عليها";
     importError.classList.remove("hidden");
   }
 });
@@ -1175,5 +856,4 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
   await openDB();
   await loadAppSettingsFromDB();
   await reloadFromDB();
-  renderFilterSegments();
 })();
