@@ -1,0 +1,9 @@
+{
+  "appId": "com.animeapp.tracker",
+  "appName": "قائمة الأنمي",
+  "webDir": "www",
+  "backgroundColor": "#0e0c14",
+  "android": {
+    "backgroundColor": "#0e0c14"
+  }
+}
