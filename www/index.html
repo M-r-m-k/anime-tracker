@@ -13,8 +13,8 @@
   <!-- الهيدر -->
   <header class="topbar">
     <div class="topbar-title">
-      <span class="logo-dot"></span>
-      <h1>قائمة الأنمي</h1>
+      <span class="logo-dot" id="logoDot"></span>
+      <h1 id="appTitle">قائمة الأنمي</h1>
     </div>
     <button class="icon-btn" id="menuBtn" aria-label="القائمة">
       <svg viewBox="0 0 24 24" width="24" height="24"><circle cx="12" cy="5" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="19" r="2" fill="currentColor"/></svg>
@@ -24,6 +24,18 @@
       <button id="toggleEditBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
         <span id="toggleEditLabel">تعديل</span>
+      </button>
+      <button id="changeLogoBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+        <span>تغيير صورة التطبيق</span>
+      </button>
+      <button id="changeNameBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M5 4v3h5.5v12h3V7H19V4z"/></svg>
+        <span>تغيير اسم التطبيق</span>
+      </button>
+      <button id="editColorsBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.52-.2-.99-.53-1.34-.32-.34-.52-.8-.52-1.31 0-1.1.9-2 2-2H17a5 5 0 0 0 5-5c0-4.42-4.48-8-10-8zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zM9 7.5A1.5 1.5 0 1 1 9 4.5a1.5 1.5 0 0 1 0 3zm6 0A1.5 1.5 0 1 1 15 4.5a1.5 1.5 0 0 1 0 3zm3.5 3.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>
+        <span>تعديل الألوان</span>
       </button>
       <button id="exportBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3v10.59l3.29-3.3 1.42 1.42L12 17.41l-4.71-4.7 1.42-1.42 3.29 3.3V3h2zM5 19h14v2H5v-2z"/></svg>
@@ -102,11 +114,64 @@
     </div>
   </div>
 
+  <!-- مودال صورة التطبيق -->
+  <div class="modal-overlay hidden" id="logoModalOverlay">
+    <div class="modal">
+      <h2>تغيير صورة التطبيق</h2>
+      <p class="modal-desc">ارفع صورة أو أكتر، وادوس على أي صورة عشان تخليها صورة التطبيق الحالية. باقي الصور بتفضل محفوظة تقدر ترجعلها تاني وقت ما تحب.</p>
+
+      <button id="uploadLogoBtn" class="btn btn-primary full-btn">رفع صورة جديدة</button>
+      <input type="file" id="logoImageInput" accept="image/*" multiple class="hidden" />
+
+      <div id="logoGallery" class="logo-gallery"></div>
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="closeLogoModalBtn" class="btn btn-ghost">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- مودال اسم التطبيق -->
+  <div class="modal-overlay hidden" id="nameModalOverlay">
+    <div class="modal">
+      <h2>تغيير اسم التطبيق</h2>
+
+      <label class="field-label">الاسم الجديد</label>
+      <input type="text" id="appNameInput" class="text-field" placeholder="اسم التطبيق" />
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="cancelNameBtn" class="btn btn-ghost">إلغاء</button>
+          <button id="saveNameBtn" class="btn btn-primary">حفظ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- مودال تعديل الألوان -->
+  <div class="modal-overlay hidden" id="colorsModalOverlay">
+    <div class="modal">
+      <h2>تعديل الألوان</h2>
+      <p class="modal-desc">أي تغيير بيتطبق فورًا. لما تخلص دوس حفظ عشان يتثبت.</p>
+
+      <div id="colorsList" class="colors-list"></div>
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="resetColorsBtn" class="btn btn-ghost">استرجاع الافتراضي</button>
+          <button id="saveColorsBtn" class="btn btn-primary">حفظ</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- مودال التصدير -->
   <div class="modal-overlay hidden" id="exportModalOverlay">
     <div class="modal">
       <h2>تصدير نسخة احتياطية</h2>
-      <p class="modal-desc">هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات) تقدر تنقله لأي جهاز.</p>
+      <p class="modal-desc">هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.</p>
 
       <label class="switch-row">
         <span>تشفير الملف بكلمة سر</span>
@@ -137,7 +202,18 @@
       <h2>استيراد نسخة احتياطية</h2>
       <p class="modal-desc">هيتم استبدال كل البيانات الحالية بالبيانات اللي في الملف.</p>
 
-      <input type="file" id="importFileInput" accept=".animebackup,.json" class="text-field" />
+      <label class="field-label">مسار الملف (اختياري)</label>
+      <div class="path-row">
+        <input type="text" id="importPathInput" class="text-field" placeholder="مثال: /storage/emulated/0/Download/anime-backup.animebackup" />
+        <button id="loadFromPathBtn" class="btn btn-primary">تحميل</button>
+      </div>
+
+      <label class="field-label">أو اختار الملف من الجهاز</label>
+      <label for="importFileInput" class="file-picker-btn">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 17.41l-4.71-4.7 1.42-1.42 3.29 3.3V4h2v10.59l3.29-3.3 1.42 1.42L12 17.41zM5 19h14v2H5v-2z" transform="rotate(180 12 12)"/></svg>
+        <span id="importFileLabel">اختيار ملف</span>
+      </label>
+      <input type="file" id="importFileInput" accept=".animebackup,.json" class="hidden" />
 
       <div id="importPasswordWrap" class="hidden">
         <label class="field-label">كلمة السر</label>

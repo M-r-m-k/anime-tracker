@@ -1,7 +1,8 @@
 /* ============ إعداد قاعدة البيانات المحلية (IndexedDB) ============ */
 const DB_NAME = "anime_tracker_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "anime_items";
+const SETTINGS_STORE = "app_settings";
 let db;
 
 function openDB() {
@@ -12,6 +13,9 @@ function openDB() {
       if (!_db.objectStoreNames.contains(STORE)) {
         const store = _db.createObjectStore(STORE, { keyPath: "id" });
         store.createIndex("order", "order", { unique: false });
+      }
+      if (!_db.objectStoreNames.contains(SETTINGS_STORE)) {
+        _db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
       }
     };
     req.onsuccess = (e) => { db = e.target.result; resolve(db); };
@@ -55,11 +59,60 @@ function dbClearAll() {
   });
 }
 
-function dbBulkPut(items) {
+// إضافة عناصر على دفعات صغيرة عشان الأجهزة الضعيفة تستحمل، مع استراحة بين كل دفعة
+function dbBulkPutBatched(items, batchSize = 25) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    const store = tx.objectStore(STORE);
-    items.forEach((it) => store.put(it));
+    let i = 0;
+    function nextBatch() {
+      if (i >= items.length) { resolve(); return; }
+      const batch = items.slice(i, i + batchSize);
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      batch.forEach((it) => store.put(it));
+      tx.oncomplete = () => {
+        i += batchSize;
+        // نسيب فرصة للمتصفح "يلحق نفسه" قبل الدفعة اللي بعدها
+        setTimeout(nextBatch, 30);
+      };
+      tx.onerror = (e) => reject(e);
+    }
+    nextBatch();
+  });
+}
+
+/* ---- إعدادات التطبيق (اسم / صورة / معرض / ألوان) ---- */
+function dbSettingsGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SETTINGS_STORE, "readonly");
+    const req = tx.objectStore(SETTINGS_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+function dbSettingsPut(key, value) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SETTINGS_STORE, "readwrite");
+    tx.objectStore(SETTINGS_STORE).put({ key, value });
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+function dbSettingsClearAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SETTINGS_STORE, "readwrite");
+    tx.objectStore(SETTINGS_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+function dbSettingsBulkPut(entries) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SETTINGS_STORE, "readwrite");
+    const store = tx.objectStore(SETTINGS_STORE);
+    entries.forEach((e) => store.put(e));
     tx.oncomplete = () => resolve();
     tx.onerror = (e) => reject(e);
   });
@@ -80,6 +133,46 @@ const statusLabels = {
   unwatched: "لم تتم مشاهدته",
 };
 
+const DEFAULT_COLORS = {
+  "--bg": "#0e0c14",
+  "--bg-elevated": "#17141f",
+  "--card": "#1c1826",
+  "--card-border": "#2a2438",
+  "--text-primary": "#f4f1fb",
+  "--text-secondary": "#9691ac",
+  "--text-faint": "#635d78",
+  "--accent-1": "#ffb648",
+  "--accent-2": "#ff6a3d",
+  "--accent-3": "#ff3d77",
+  "--success": "#34d399",
+  "--danger": "#ff5470",
+};
+
+const COLOR_LABELS = {
+  "--bg": "الخلفية الأساسية",
+  "--bg-elevated": "خلفية المودالات",
+  "--card": "خلفية الكروت",
+  "--card-border": "حدود الكروت",
+  "--text-primary": "النص الأساسي",
+  "--text-secondary": "النص الثانوي",
+  "--text-faint": "النص الخافت",
+  "--accent-1": "لون مميز 1 (بداية التدرج)",
+  "--accent-2": "لون مميز 2 (وسط التدرج)",
+  "--accent-3": "لون مميز 3 (نهاية التدرج)",
+  "--success": "لون النجاح",
+  "--danger": "لون الخطر/الحذف",
+};
+
+const DEFAULT_APP_NAME = "قائمة الأنمي";
+
+// الإعدادات الحالية في الذاكرة
+let appSettings = {
+  appName: DEFAULT_APP_NAME,
+  logo: null, // data URL للصورة المختارة كصورة تطبيق
+  gallery: [], // كل الصور المرفوعة
+  colors: { ...DEFAULT_COLORS },
+};
+
 /* ============ عناصر DOM ============ */
 const grid = document.getElementById("grid");
 const emptyState = document.getElementById("emptyState");
@@ -90,6 +183,8 @@ const toggleEditBtn = document.getElementById("toggleEditBtn");
 const toggleEditLabel = document.getElementById("toggleEditLabel");
 const searchInput = document.getElementById("searchInput");
 const filterSelect = document.getElementById("filterSelect");
+const appTitleEl = document.getElementById("appTitle");
+const logoDotEl = document.getElementById("logoDot");
 
 /* ============ عرض القائمة ============ */
 function render() {
@@ -135,7 +230,6 @@ function render() {
         openAnimeModal(anime.id);
       });
     } else {
-      // في غير وضع التعديل: الضغط على الكارت يفتح تغيير الحالة السريع
       card.addEventListener("click", () => quickStatusCycle(anime));
     }
 
@@ -149,7 +243,6 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// دوسة على الكارت (خارج وضع التعديل) بتلف على الحالات بسرعة
 const statusCycleOrder = ["", "unwatched", "finished_watched", "finished_boring", "ecchi_unwatched", "ecchi_finished"];
 async function quickStatusCycle(anime) {
   const idx = statusCycleOrder.indexOf(anime.status || "");
@@ -309,6 +402,204 @@ async function reloadFromDB() {
 }
 
 /* ================================================================
+   إعدادات التطبيق: صورة/اسم/ألوان
+   ================================================================ */
+function applyAppSettingsToUI() {
+  appTitleEl.textContent = appSettings.appName || DEFAULT_APP_NAME;
+  document.title = appSettings.appName || DEFAULT_APP_NAME;
+
+  if (appSettings.logo) {
+    logoDotEl.outerHTML = `<img id="logoDot" class="logo-img" src="${appSettings.logo}" alt="logo" />`;
+  } else {
+    const current = document.getElementById("logoDot");
+    if (current.tagName === "IMG") {
+      current.outerHTML = `<span id="logoDot" class="logo-dot"></span>`;
+    }
+  }
+
+  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
+  Object.keys(colors).forEach((varName) => {
+    document.documentElement.style.setProperty(varName, colors[varName]);
+  });
+}
+
+async function loadAppSettingsFromDB() {
+  const rows = await dbSettingsGetAll();
+  const map = {};
+  rows.forEach((r) => { map[r.key] = r.value; });
+
+  appSettings = {
+    appName: map.appName || DEFAULT_APP_NAME,
+    logo: map.logo || null,
+    gallery: map.gallery || [],
+    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
+  };
+  applyAppSettingsToUI();
+}
+
+async function saveAppSettingKey(key, value) {
+  appSettings[key] = value;
+  await dbSettingsPut(key, value);
+}
+
+/* ---- مودال صورة التطبيق ---- */
+const logoModalOverlay = document.getElementById("logoModalOverlay");
+const uploadLogoBtn = document.getElementById("uploadLogoBtn");
+const logoImageInput = document.getElementById("logoImageInput");
+const logoGallery = document.getElementById("logoGallery");
+
+document.getElementById("changeLogoBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  renderLogoGallery();
+  logoModalOverlay.classList.remove("hidden");
+});
+document.getElementById("closeLogoModalBtn").addEventListener("click", () => {
+  logoModalOverlay.classList.add("hidden");
+});
+
+uploadLogoBtn.addEventListener("click", () => logoImageInput.click());
+
+logoImageInput.addEventListener("change", async () => {
+  const files = Array.from(logoImageInput.files || []);
+  if (files.length === 0) return;
+
+  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const newImages = await Promise.all(files.map(readAsDataUrl));
+  appSettings.gallery = [...appSettings.gallery, ...newImages];
+  await dbSettingsPut("gallery", appSettings.gallery);
+  renderLogoGallery();
+  logoImageInput.value = "";
+  showToast("تم رفع الصور ✅");
+});
+
+function renderLogoGallery() {
+  logoGallery.innerHTML = "";
+  if (appSettings.gallery.length === 0) {
+    logoGallery.innerHTML = `<p class="hint-text">لسه مفيش صور مرفوعة.</p>`;
+    return;
+  }
+  appSettings.gallery.forEach((imgSrc, idx) => {
+    const item = document.createElement("div");
+    item.className = "logo-gallery-item" + (imgSrc === appSettings.logo ? " active" : "");
+    item.innerHTML = `
+      <img src="${imgSrc}" alt="logo option" />
+      <button class="logo-delete-btn" data-idx="${idx}" aria-label="حذف">✕</button>
+    `;
+    item.querySelector("img").addEventListener("click", async () => {
+      await saveAppSettingKey("logo", imgSrc);
+      applyAppSettingsToUI();
+      renderLogoGallery();
+      showToast("اتغيرت صورة التطبيق ✅");
+    });
+    item.querySelector(".logo-delete-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const wasActive = appSettings.gallery[idx] === appSettings.logo;
+      appSettings.gallery.splice(idx, 1);
+      await dbSettingsPut("gallery", appSettings.gallery);
+      if (wasActive) {
+        await saveAppSettingKey("logo", null);
+        applyAppSettingsToUI();
+      }
+      renderLogoGallery();
+    });
+    logoGallery.appendChild(item);
+  });
+}
+
+/* ---- مودال اسم التطبيق ---- */
+const nameModalOverlay = document.getElementById("nameModalOverlay");
+const appNameInput = document.getElementById("appNameInput");
+
+document.getElementById("changeNameBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  appNameInput.value = appSettings.appName || DEFAULT_APP_NAME;
+  nameModalOverlay.classList.remove("hidden");
+});
+document.getElementById("cancelNameBtn").addEventListener("click", () => {
+  nameModalOverlay.classList.add("hidden");
+});
+document.getElementById("saveNameBtn").addEventListener("click", async () => {
+  const newName = appNameInput.value.trim();
+  if (!newName) {
+    showToast("اكتب اسم الأول");
+    return;
+  }
+  await saveAppSettingKey("appName", newName);
+  applyAppSettingsToUI();
+  nameModalOverlay.classList.add("hidden");
+  showToast("تم تغيير الاسم ✅");
+});
+
+/* ---- مودال تعديل الألوان ---- */
+const colorsModalOverlay = document.getElementById("colorsModalOverlay");
+const colorsList = document.getElementById("colorsList");
+
+document.getElementById("editColorsBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  renderColorsList();
+  colorsModalOverlay.classList.remove("hidden");
+});
+
+function renderColorsList() {
+  colorsList.innerHTML = "";
+  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
+  Object.keys(DEFAULT_COLORS).forEach((varName) => {
+    const row = document.createElement("div");
+    row.className = "color-row";
+    row.innerHTML = `
+      <span class="color-row-label">${COLOR_LABELS[varName] || varName}</span>
+      <input type="color" class="color-swatch" data-var="${varName}" value="${colors[varName]}" />
+      <input type="text" class="color-hex text-field" data-var="${varName}" value="${colors[varName]}" />
+    `;
+    const swatch = row.querySelector(".color-swatch");
+    const hex = row.querySelector(".color-hex");
+    swatch.addEventListener("input", () => {
+      hex.value = swatch.value;
+      document.documentElement.style.setProperty(varName, swatch.value);
+    });
+    hex.addEventListener("input", () => {
+      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex.value)) {
+        swatch.value = hex.value.length === 4
+          ? "#" + [...hex.value.slice(1)].map((c) => c + c).join("")
+          : hex.value;
+        document.documentElement.style.setProperty(varName, hex.value);
+      }
+    });
+    colorsList.appendChild(row);
+  });
+}
+
+document.getElementById("saveColorsBtn").addEventListener("click", async () => {
+  const newColors = {};
+  colorsList.querySelectorAll(".color-hex").forEach((input) => {
+    newColors[input.dataset.var] = input.value;
+  });
+  await saveAppSettingKey("colors", newColors);
+  colorsModalOverlay.classList.add("hidden");
+  showToast("تم حفظ الألوان ✅");
+});
+
+document.getElementById("resetColorsBtn").addEventListener("click", async () => {
+  await saveAppSettingKey("colors", { ...DEFAULT_COLORS });
+  applyAppSettingsToUI();
+  renderColorsList();
+  showToast("رجعنا الألوان الافتراضية");
+});
+
+// إغلاق المودالات الجديدة بالدوس برة (بنفس سلوك باقي المودالات)
+[logoModalOverlay, nameModalOverlay, colorsModalOverlay].forEach((overlay) => {
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.classList.add("hidden");
+  });
+});
+
+/* ================================================================
    نظام التشفير (AES-GCM + PBKDF2) للتصدير/الاستيراد
    ================================================================ */
 async function deriveKey(password, saltBytes) {
@@ -401,9 +692,10 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
 
   const exportData = {
     appName: "anime-tracker",
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     items: animeList,
+    settings: appSettings,
   };
   const jsonString = JSON.stringify(exportData);
 
@@ -432,6 +724,9 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
 /* ============ مودال الاستيراد ============ */
 const importModalOverlay = document.getElementById("importModalOverlay");
 const importFileInput = document.getElementById("importFileInput");
+const importFileLabel = document.getElementById("importFileLabel");
+const importPathInput = document.getElementById("importPathInput");
+const loadFromPathBtn = document.getElementById("loadFromPathBtn");
 const importPasswordWrap = document.getElementById("importPasswordWrap");
 const importPassword = document.getElementById("importPassword");
 const importError = document.getElementById("importError");
@@ -440,6 +735,8 @@ let pendingImportPayload = null;
 document.getElementById("importBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
   importFileInput.value = "";
+  importFileLabel.textContent = "اختيار ملف";
+  importPathInput.value = "";
   importPassword.value = "";
   importPasswordWrap.classList.add("hidden");
   importError.classList.add("hidden");
@@ -451,10 +748,7 @@ document.getElementById("cancelImportBtn").addEventListener("click", () => {
   importModalOverlay.classList.add("hidden");
 });
 
-importFileInput.addEventListener("change", async () => {
-  const file = importFileInput.files[0];
-  if (!file) return;
-  const text = await file.text();
+function parsePendingImportText(text) {
   try {
     pendingImportPayload = JSON.parse(text);
     importPasswordWrap.classList.toggle("hidden", !pendingImportPayload.encrypted);
@@ -464,6 +758,35 @@ importFileInput.addEventListener("change", async () => {
     importError.classList.remove("hidden");
     pendingImportPayload = null;
   }
+}
+
+importFileInput.addEventListener("change", async () => {
+  const file = importFileInput.files[0];
+  if (!file) return;
+  importFileLabel.textContent = file.name;
+  const text = await file.text();
+  parsePendingImportText(text);
+});
+
+// تحميل من مسار مكتوب يدويًا (بيشتغل لو التطبيق شغال جوه متصفح عادي بيدعم قراءة ملفات محلية،
+// أو لو اتضاف لاحقًا دعم Capacitor Filesystem. حاليًا: محاولة عبر fetch على مسار file:// كـ fallback)
+loadFromPathBtn.addEventListener("click", async () => {
+  const path = importPathInput.value.trim();
+  if (!path) {
+    showToast("اكتب مسار الملف الأول");
+    return;
+  }
+  try {
+    const normalized = path.startsWith("/") ? "file://" + path : path;
+    const res = await fetch(normalized);
+    if (!res.ok) throw new Error("read failed");
+    const text = await res.text();
+    parsePendingImportText(text);
+    if (pendingImportPayload) showToast("تم تحميل الملف من المسار ✅");
+  } catch (e) {
+    importError.textContent = "معرفناش نقرأ الملف من المسار ده مباشرة على الجهاز ده — استخدم اختيار ملف بدلًا منه";
+    importError.classList.remove("hidden");
+  }
 });
 
 document.getElementById("confirmImportBtn").addEventListener("click", async () => {
@@ -471,6 +794,10 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
     showToast("اختار ملف الأول");
     return;
   }
+
+  // نسخة احتياطية في الذاكرة من البيانات الحالية، لو حصل فشل نرجعلها بدل ما نمسحها بلا رجعة
+  const previousItems = animeList.slice();
+  const previousSettings = { ...appSettings, colors: { ...appSettings.colors }, gallery: [...appSettings.gallery] };
 
   try {
     let jsonString;
@@ -490,14 +817,36 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
       throw new Error("invalid structure");
     }
 
-    await dbClearAll();
-    await dbBulkPut(parsed.items);
+    try {
+      await dbClearAll();
+      await dbBulkPutBatched(parsed.items, 25);
+
+      if (parsed.settings) {
+        await dbSettingsClearAll();
+        const entries = Object.keys(parsed.settings).map((key) => ({ key, value: parsed.settings[key] }));
+        await dbSettingsBulkPut(entries);
+      }
+    } catch (writeErr) {
+      // فشل أثناء الكتابة: نحاول نرجّع البيانات القديمة زي ما كانت
+      try {
+        await dbClearAll();
+        await dbBulkPutBatched(previousItems, 25);
+        await dbSettingsClearAll();
+        const restoreEntries = Object.keys(previousSettings).map((key) => ({ key, value: previousSettings[key] }));
+        await dbSettingsBulkPut(restoreEntries);
+      } catch (restoreErr) {
+        // لو حتى الاسترجاع فشل، على الأقل مانمسحش المتغيرات في الذاكرة
+      }
+      throw writeErr;
+    }
+
     await reloadFromDB();
+    await loadAppSettingsFromDB();
 
     importModalOverlay.classList.add("hidden");
     showToast(`تم استيراد ${parsed.items.length} عنصر ✅`);
   } catch (e) {
-    importError.textContent = "كلمة السر غلط أو الملف تالف";
+    importError.textContent = "كلمة السر غلط أو الملف تالف أو حصلت مشكلة أثناء الاستيراد — البيانات القديمة اتحافظ عليها";
     importError.classList.remove("hidden");
   }
 });
@@ -505,5 +854,6 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
 /* ============ بدء التشغيل ============ */
 (async function init() {
   await openDB();
+  await loadAppSettingsFromDB();
   await reloadFromDB();
 })();

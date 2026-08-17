@@ -63,6 +63,14 @@ body {
   box-shadow: 0 0 12px rgba(255, 106, 61, 0.7);
 }
 
+.logo-img {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 0 12px rgba(255, 106, 61, 0.5);
+  border: 1px solid var(--card-border);
+}
+
 .icon-btn {
   background: var(--card);
   border: 1px solid var(--card-border);
@@ -344,6 +352,7 @@ body {
 .btn-primary:active { filter: brightness(0.95); }
 .btn-ghost { background: var(--card); color: var(--text-secondary); border: 1px solid var(--card-border); }
 .btn-danger { background: transparent; color: var(--danger); border: 1px solid rgba(255,84,112,0.35); }
+.full-btn { width: 100%; margin-top: 4px; }
 
 /* ===== Toast ===== */
 .toast {
@@ -365,3 +374,90 @@ body {
   from { opacity: 0; transform: translate(-50%, 10px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* ===== معرض صور التطبيق (اللوجو) ===== */
+.logo-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+.logo-gallery-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 2px solid var(--card-border);
+}
+.logo-gallery-item.active { border-color: var(--accent-2); box-shadow: 0 0 0 2px rgba(255,106,61,0.35); }
+.logo-gallery-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.logo-delete-btn {
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: rgba(5,4,8,0.75);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  font-size: 12px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ===== قائمة تعديل الألوان ===== */
+.colors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.color-row {
+  display: grid;
+  grid-template-columns: 1fr 38px 90px;
+  align-items: center;
+  gap: 8px;
+}
+.color-row-label {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.color-swatch {
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  padding: 0;
+}
+.color-hex {
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ===== مسار الملف عند الاستيراد ===== */
+.path-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.path-row .text-field { flex: 1; }
+.path-row .btn { white-space: nowrap; }
+
+/* ===== زرار اختيار ملف بشكل التطبيق (بدل الافتراضي الأبيض) ===== */
+.file-picker-btn {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1.5px dashed var(--card-border);
+  background: var(--card);
+  color: var(--text-secondary);
+  font-family: 'Tajawal', sans-serif;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.file-picker-btn svg { color: var(--accent-2); flex-shrink: 0; }
+.file-picker-btn:active { background: var(--bg-elevated); }
