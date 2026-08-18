@@ -60,18 +60,23 @@ function dbClearAll() {
 }
 
 // إضافة عناصر على دفعات صغيرة عشان الأجهزة الضعيفة تستحمل، مع استراحة بين كل دفعة
-function dbBulkPutBatched(items, batchSize = 25) {
+// وتقرير نسبة التقدم لعرضها في شريط التحميل
+function dbBulkPutBatched(items, batchSize = 25, onProgress) {
   return new Promise((resolve, reject) => {
     let i = 0;
     function nextBatch() {
-      if (i >= items.length) { resolve(); return; }
+      if (i >= items.length) {
+        if (onProgress) onProgress(items.length, items.length);
+        resolve();
+        return;
+      }
       const batch = items.slice(i, i + batchSize);
       const tx = db.transaction(STORE, "readwrite");
       const store = tx.objectStore(STORE);
       batch.forEach((it) => store.put(it));
       tx.oncomplete = () => {
         i += batchSize;
-        // نسيب فرصة للمتصفح "يلحق نفسه" قبل الدفعة اللي بعدها
+        if (onProgress) onProgress(Math.min(i, items.length), items.length);
         setTimeout(nextBatch, 30);
       };
       tx.onerror = (e) => reject(e);
@@ -80,7 +85,7 @@ function dbBulkPutBatched(items, batchSize = 25) {
   });
 }
 
-/* ---- إعدادات التطبيق (اسم / صورة / معرض / ألوان) ---- */
+/* ---- إعدادات التطبيق (اسم / صورة / معرض / ألوان / نصوص / حالات) ---- */
 function dbSettingsGetAll() {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(SETTINGS_STORE, "readonly");
@@ -118,21 +123,7 @@ function dbSettingsBulkPut(entries) {
   });
 }
 
-/* ============ حالة التطبيق ============ */
-let animeList = [];
-let editMode = false;
-let currentEditId = null;
-let pickedImageDataUrl = null;
-
-const statusLabels = {
-  "": "بدون حالة",
-  finished_watched: "منتهي - تمت مشاهدته",
-  finished_boring: "منتهي - ومملّ",
-  ecchi_finished: "إيتشي - منتهي",
-  ecchi_unwatched: "إيتشي - لم يُشاهد",
-  unwatched: "لم تتم مشاهدته",
-};
-
+/* ============ القيم الافتراضية ============ */
 const DEFAULT_COLORS = {
   "--bg": "#0e0c14",
   "--bg-elevated": "#17141f",
@@ -146,6 +137,7 @@ const DEFAULT_COLORS = {
   "--accent-3": "#ff3d77",
   "--success": "#34d399",
   "--danger": "#ff5470",
+  "--progress": "#3b82f6",
 };
 
 const COLOR_LABELS = {
@@ -161,17 +153,179 @@ const COLOR_LABELS = {
   "--accent-3": "لون مميز 3 (نهاية التدرج)",
   "--success": "لون النجاح",
   "--danger": "لون الخطر/الحذف",
+  "--progress": "لون شريط التحميل",
 };
 
-const DEFAULT_APP_NAME = "قائمة الأنمي";
+const DEFAULT_STATUSES = [
+  { key: "finished_watched", label: "منتهي - تمت مشاهدته", color: "#34d399" },
+  { key: "finished_boring", label: "منتهي - وممل، لن يتم تحميله مرة أخرى", color: "#9691ac" },
+  { key: "ecchi_finished", label: "إيتشي - منتهي", color: "#ff3d77" },
+  { key: "ecchi_unwatched", label: "إيتشي - لم يُشاهد", color: "#ff6a3d" },
+  { key: "unwatched", label: "لم تتم مشاهدته", color: "#ffb648" },
+];
+
+const DEFAULT_TEXTS = {
+  search_placeholder: "ابحث عن أنمي...",
+  empty_title: "لسه مفيش أي أنمي مضاف",
+  empty_subtitle: "افتح وضع التعديل وضيف أول عنصر",
+  menu_edit: "تعديل",
+  menu_edit_done: "إنهاء التعديل",
+  menu_change_logo: "تغيير صورة التطبيق",
+  menu_change_name: "تغيير اسم التطبيق",
+  menu_edit_colors: "تعديل الألوان",
+  menu_edit_texts: "تعديل النصوص",
+  menu_edit_statuses: "تعديل الحالات",
+  menu_export: "تصدير نسخة احتياطية",
+  menu_import: "استيراد نسخة احتياطية",
+  status_all: "الكل",
+  status_none: "بدون حالة",
+  field_label_image: "صورة الغلاف",
+  image_picker_placeholder: "دوس لاختيار صورة",
+  field_label_name: "الاسم",
+  field_name_placeholder: "اسم الأنمي",
+  field_label_status: "الحالة",
+  btn_delete: "حذف",
+  btn_cancel: "إلغاء",
+  btn_save: "حفظ",
+  btn_close: "إغلاق",
+  btn_reset_default: "استرجاع الافتراضي",
+  btn_choose_file: "اختيار ملف",
+  btn_import: "استيراد",
+  btn_upload_new_image: "رفع صورة جديدة",
+  modal_add_title: "إضافة أنمي",
+  modal_edit_title: "تعديل الأنمي",
+  logo_modal_title: "تغيير صورة التطبيق",
+  logo_modal_desc: "ارفع صورة أو أكتر، وادوس على أي صورة عشان تخليها صورة التطبيق الحالية. باقي الصور بتفضل محفوظة تقدر ترجعلها تاني وقت ما تحب.",
+  name_modal_title: "تغيير اسم التطبيق",
+  field_label_new_name: "الاسم الجديد",
+  colors_modal_title: "تعديل الألوان",
+  colors_modal_desc: "أي تغيير بيتطبق فورًا. لما تخلص دوس حفظ عشان يتثبت.",
+  texts_modal_title: "تعديل النصوص",
+  texts_modal_desc: "غيّر أي نص ظاهر في التطبيق زي ما تحب. الحفظ بيتطبق فورًا.",
+  statuses_modal_title: "تعديل الحالات",
+  statuses_modal_desc: "تقدر تحذف أي حالة أو تضيف حالة جديدة بلونها الخاص.",
+  field_label_new_status: "إضافة حالة جديدة",
+  field_new_status_placeholder: "اسم الحالة الجديدة",
+  export_modal_title: "تصدير نسخة احتياطية",
+  export_modal_desc: "هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.",
+  export_encrypt_label: "تشفير الملف بكلمة سر",
+  export_password_warning: "⚠️ لو نسيت كلمة السر، مش هيبقى فيه طريقة لاسترجاع البيانات.",
+  export_confirm_btn: "تصدير الآن",
+  field_label_password: "كلمة السر",
+  field_password_placeholder: "اكتب كلمة سر قوية",
+  field_label_password_confirm: "تأكيد كلمة السر",
+  field_password_confirm_placeholder: "اكتب كلمة السر تاني",
+  field_import_password_placeholder: "اكتب كلمة سر الملف",
+  import_modal_title: "استيراد نسخة احتياطية",
+  import_modal_desc: "هيتم استبدال كل البيانات الحالية بالبيانات اللي في الملف.",
+  field_label_choose_file: "اختار الملف من الجهاز",
+  toast_saved: "تم الحفظ ✅",
+  toast_deleted: "تم الحذف 🗑️",
+  toast_name_saved: "تم تغيير الاسم ✅",
+  toast_colors_saved: "تم حفظ الألوان ✅",
+  toast_colors_reset: "رجعنا الألوان الافتراضية",
+  toast_texts_saved: "تم حفظ النصوص ✅",
+  toast_texts_reset: "رجعنا النصوص الافتراضية",
+  toast_status_added: "تمت إضافة الحالة ✅",
+  toast_status_deleted: "تم حذف الحالة 🗑️",
+  toast_images_uploaded: "تم رفع الصور ✅",
+  toast_logo_changed: "اتغيرت صورة التطبيق ✅",
+  toast_export_done: "تم تصدير الملف ✅",
+  toast_name_missing: "اكتب الاسم الأول",
+  toast_status_name_missing: "اكتب اسم الحالة الأول",
+  toast_image_error: "حصلت مشكلة في تحميل الصورة",
+  toast_images_error: "حصلت مشكلة أثناء رفع الصور",
+  toast_password_short: "كلمة السر لازم تكون 4 حروف على الأقل",
+  toast_password_mismatch: "كلمتا السر مش متطابقتين",
+  toast_choose_file_first: "اختار ملف الأول",
+  import_error_generic: "كلمة السر غلط أو الملف تالف أو حصلت مشكلة أثناء الاستيراد — البيانات القديمة اتحافظ عليها",
+  import_error_invalid_file: "الملف ده تالف أو مش بصيغة صحيحة",
+  import_error_password_needed: "الملف محمي بكلمة سر، اكتبها الأول",
+};
+
+const DEFAULT_APP_NAME = "Animelist";
+
+const EXTRA_DEFAULT_TEXTS = {
+  menu_settings: "الإعدادات",
+  filter_pinned_only: "المثبت فقط",
+  filter_hide_finished: "إخفاء المنتهي",
+  filter_continue_watching: "أكمل المشاهدة",
+  sort_manual: "الترتيب اليدوي",
+  sort_name: "الاسم",
+  sort_status: "الحالة",
+  sort_progress: "نسبة التقدم",
+  field_label_total_episodes: "عدد الحلقات",
+  field_label_current_episode: "الحلقة الحالية",
+  field_label_season: "الموسم",
+  field_label_year: "السنة",
+  field_label_rating: "تقييمك الشخصي",
+  field_label_pinned: "تثبيت في أعلى القائمة",
+  btn_watched_episode: "شاهدت الحلقة ✓ +1",
+  btn_toggle_pin: "تثبيت / إلغاء التثبيت",
+  btn_undo: "تراجع",
+  backup_banner_text: "معملتش نسخة احتياطية من فترة",
+  backup_banner_export: "تصدير الآن",
+  backup_banner_dismiss: "تجاهل",
+  settings_modal_title: "الإعدادات",
+  settings_backup_reminder_enabled: "تفعيل تذكير النسخة الاحتياطية",
+  settings_backup_reminder_days: "تذكرني كل كام يوم",
+  settings_hide_finished_default: "إخفاء المنتهي افتراضيًا",
+  settings_recent_changes_title: "سجل آخر التغييرات",
+  toast_deleted_undo: "تم الحذف",
+  toast_pinned: "تم التثبيت 📌",
+  toast_unpinned: "تم إلغاء التثبيت",
+  toast_episode_updated: "تم تحديث الحلقة ✅",
+  toast_reorder_saved: "تم حفظ الترتيب الجديد",
+  recent_change_added: "أضاف",
+  recent_change_edited: "عدّل",
+  recent_change_episode: "حدّث حلقة",
+  no_recent_changes: "لسه مفيش أي تغييرات مسجّلة",
+};
+Object.assign(DEFAULT_TEXTS, EXTRA_DEFAULT_TEXTS);
+
+const DEFAULT_SETTINGS_EXTRA = {
+  backupReminder: { enabled: true, intervalDays: 7, lastExportAt: null },
+  hideFinishedDefault: false,
+  recentChanges: [],
+};
+const MAX_RECENT_CHANGES = 15;
 
 // الإعدادات الحالية في الذاكرة
 let appSettings = {
   appName: DEFAULT_APP_NAME,
-  logo: null, // data URL للصورة المختارة كصورة تطبيق
-  gallery: [], // كل الصور المرفوعة
+  logo: null,
+  gallery: [],
   colors: { ...DEFAULT_COLORS },
+  texts: { ...DEFAULT_TEXTS },
+  statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
+  backupReminder: { ...DEFAULT_SETTINGS_EXTRA.backupReminder },
+  hideFinishedDefault: false,
+  recentChanges: [],
 };
+
+// فلاتر وترتيب الشاشة الرئيسية (مش بيانات محفوظة، بترجع الافتراضي كل فتح)
+let currentSort = "manual";
+let pinnedOnlyFilter = false;
+let hideFinishedFilter = false;
+let continueWatchingFilter = false;
+
+// تسجيل حركة في سجل آخر التغييرات (محدود بعدد صغير عشان مايكبرش لانهائي)
+async function logRecentChange(type, animeName) {
+  appSettings.recentChanges = appSettings.recentChanges || [];
+  appSettings.recentChanges.unshift({ type, animeName, timestamp: Date.now() });
+  if (appSettings.recentChanges.length > MAX_RECENT_CHANGES) {
+    appSettings.recentChanges = appSettings.recentChanges.slice(0, MAX_RECENT_CHANGES);
+  }
+  await dbSettingsPut("recentChanges", appSettings.recentChanges);
+}
+
+/* ============ حالة التطبيق ============ */
+let animeList = [];
+let editMode = false;
+let currentEditId = null;
+let pickedImageDataUrl = null;
+let selectedAnimeStatus = "";
+let selectedFilterStatus = "";
 
 /* ============ عناصر DOM ============ */
 const grid = document.getElementById("grid");
@@ -182,60 +336,271 @@ const dropdownMenu = document.getElementById("dropdownMenu");
 const toggleEditBtn = document.getElementById("toggleEditBtn");
 const toggleEditLabel = document.getElementById("toggleEditLabel");
 const searchInput = document.getElementById("searchInput");
-const filterSelect = document.getElementById("filterSelect");
+const filterSegments = document.getElementById("filterSegments");
 const appTitleEl = document.getElementById("appTitle");
 const logoDotEl = document.getElementById("logoDot");
 
-/* ============ عرض القائمة ============ */
-function render() {
-  const query = searchInput.value.trim().toLowerCase();
-  const statusFilter = filterSelect.value;
+/* ============ دالة الترجمة/النصوص القابلة للتعديل ============ */
+function t(key) {
+  return (appSettings.texts && appSettings.texts[key]) ?? DEFAULT_TEXTS[key] ?? key;
+}
 
-  const filtered = animeList
-    .filter((a) => (query ? a.name.toLowerCase().includes(query) : true))
-    .filter((a) => (statusFilter ? a.status === statusFilter : true))
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+function applyTexts() {
+  document.querySelectorAll("[data-text-key]").forEach((el) => {
+    el.textContent = t(el.dataset.textKey);
+  });
+  document.querySelectorAll("[data-text-placeholder-key]").forEach((el) => {
+    el.placeholder = t(el.dataset.textPlaceholderKey);
+  });
+  toggleEditLabel.textContent = editMode ? t("menu_edit_done") : t("menu_edit");
+}
 
-  grid.innerHTML = "";
+/* ============ تصغير وضغط الصور قبل التخزين ============ */
+function resizeImageFile(file, maxWidth = 480, quality = 0.72, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (onProgress) onProgress(15, "جاري القراءة...");
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (onProgress) onProgress(50, "جاري المعالجة...");
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxWidth) {
+          height = Math.round((maxWidth / width) * height);
+          width = maxWidth;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        if (onProgress) onProgress(90, "جاري الحفظ...");
+        const result = canvas.toDataURL("image/jpeg", quality);
+        if (onProgress) onProgress(100, "تم ✅");
+        resolve(result);
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
-  if (filtered.length === 0) {
-    emptyState.classList.remove("hidden");
+/* ============ شريط التقدم (Progress Bar) ============ */
+function setProgress(prefix, percent, label) {
+  const wrap = document.getElementById(prefix + "ProgressWrap");
+  const fill = document.getElementById(prefix + "ProgressFill");
+  const lbl = document.getElementById(prefix + "ProgressLabel");
+  if (!wrap) return;
+  wrap.classList.remove("hidden");
+  const p = Math.min(100, Math.max(0, percent));
+  fill.style.width = p + "%";
+  lbl.textContent = label || `${Math.round(p)}%`;
+}
+function hideProgress(prefix) {
+  const wrap = document.getElementById(prefix + "ProgressWrap");
+  if (wrap) wrap.classList.add("hidden");
+}
+
+/* ============ تطبيق الألوان على الواجهة ============ */
+function applyColorsToUI() {
+  const root = document.documentElement;
+  Object.entries(appSettings.colors).forEach(([key, value]) => {
+    root.style.setProperty(key, value);
+  });
+}
+
+function applyAppIdentity() {
+  appTitleEl.textContent = appSettings.appName || DEFAULT_APP_NAME;
+  if (appSettings.logo) {
+    logoDotEl.style.background = `url(${appSettings.logo}) center/cover`;
+    logoDotEl.style.boxShadow = "none";
   } else {
-    emptyState.classList.add("hidden");
+    logoDotEl.style.background = "";
+    logoDotEl.style.boxShadow = "";
   }
+}
 
-  filtered.forEach((anime) => {
-    const card = document.createElement("div");
-    card.className = "card";
+/* ============ تحميل الإعدادات من القاعدة مع دمج القيم الافتراضية ============ */
+async function loadAppSettingsFromDB() {
+  const rows = await dbSettingsGetAll();
+  const map = {};
+  rows.forEach((r) => { map[r.key] = r.value; });
 
-    const statusKey = anime.status || "empty";
-    const statusText = statusLabels[anime.status] || "بدون حالة";
+  appSettings = {
+    appName: map.appName ?? DEFAULT_APP_NAME,
+    logo: map.logo ?? null,
+    gallery: map.gallery ?? [],
+    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
+    texts: { ...DEFAULT_TEXTS, ...(map.texts || {}) },
+    statuses: (map.statuses && map.statuses.length ? map.statuses : DEFAULT_STATUSES).map((s) => ({ ...s })),
+    backupReminder: { ...DEFAULT_SETTINGS_EXTRA.backupReminder, ...(map.backupReminder || {}) },
+    hideFinishedDefault: map.hideFinishedDefault ?? false,
+    recentChanges: map.recentChanges ?? [],
+  };
 
-    card.innerHTML = `
+  hideFinishedFilter = appSettings.hideFinishedDefault;
+
+  applyColorsToUI();
+  applyAppIdentity();
+  applyTexts();
+}
+
+/* ============ عرض القائمة ============ */
+function getStatusMeta(key) {
+  if (!key) return { label: t("status_none"), color: "var(--text-faint)" };
+  const found = appSettings.statuses.find((s) => s.key === key);
+  return found ? { label: found.label, color: found.color } : { label: t("status_none"), color: "var(--text-faint)" };
+}
+
+// حساب نسبة التقدم لأنمي (بيتعامل بأمان مع عناصر قديمة ملهاش الحقول دي أصلًا)
+function getProgress(anime) {
+  const total = Number(anime.totalEpisodes) || 0;
+  const current = Number(anime.currentEpisode) || 0;
+  if (total <= 0) return null;
+  const clampedCurrent = Math.min(current, total);
+  const percent = Math.round((clampedCurrent / total) * 100);
+  return { current: clampedCurrent, total, percent };
+}
+
+function buildBlockInner(anime) {
+  const meta = getStatusMeta(anime.status);
+  const hasNotes = !!(anime.notes && anime.notes.trim());
+  const progress = getProgress(anime);
+  const isPinned = !!anime.pinned;
+
+  return `
+    <div class="card" data-id="${anime.id}">
       <div class="card-image-wrap">
         ${
           anime.image
-            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" />`
-            : `<div class="no-image"><svg viewBox="0 0 24 24" width="34" height="34"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
+            ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" loading="lazy" decoding="async" />`
+            : `<div class="no-image"><svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
         }
-        <div class="status-chip st-${statusKey}">${statusText}</div>
-        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
+        ${isPinned ? `<span class="pin-badge">📌</span>` : ""}
+        ${editMode ? `<button class="drag-handle" data-id="${anime.id}" title="اسحب للترتيب">⠿</button>` : ""}
+        ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
       </div>
-      <div class="card-title">${escapeHtml(anime.name)}</div>
-    `;
-
-    if (editMode) {
-      card.querySelector(".card-edit-btn").addEventListener("click", (e) => {
-        e.stopPropagation();
-        openAnimeModal(anime.id);
-      });
-    } else {
-      card.addEventListener("click", () => quickStatusCycle(anime));
-    }
-
-    grid.appendChild(card);
-  });
+      <div class="card-info">
+        <div class="card-title" data-id="${anime.id}">${escapeHtml(anime.name)}</div>
+        <div class="status-chip" style="color:${meta.color};border-color:${hexToRgba(meta.color, 0.4)};background:${hexToRgba(meta.color, 0.1)};">${escapeHtml(meta.label)}</div>
+        ${
+          progress
+            ? `<div class="mini-progress"><div class="progress-track"><div class="progress-fill" style="width:${progress.percent}%"></div></div><span class="mini-progress-text">${progress.current}/${progress.total} · ${progress.percent}%</span></div>`
+            : ""
+        }
+      </div>
+      <button class="note-btn${hasNotes ? " has-notes" : ""}" data-id="${anime.id}" title="ملاحظات">📄</button>
+    </div>
+    <div class="notes-panel hidden" data-id="${anime.id}">
+      ${
+        editMode
+          ? `<textarea class="notes-edit" data-id="${anime.id}" placeholder="اكتب ملاحظاتك عن الأنمي هنا...">${escapeHtml(anime.notes || "")}</textarea>`
+          : `<p class="notes-text">${hasNotes ? escapeHtml(anime.notes) : "مفيش ملاحظات مكتوبة"}</p>`
+      }
+    </div>
+  `;
 }
+
+function buildAnimeBlock(anime) {
+  return `<div class="anime-block" data-block-id="${anime.id}">${buildBlockInner(anime)}</div>`;
+}
+
+function getFilteredSortedList() {
+  const query = searchInput.value.trim().toLowerCase();
+
+  let list = animeList
+    .filter((a) => (query ? a.name.toLowerCase().includes(query) : true))
+    .filter((a) => (selectedFilterStatus ? a.status === selectedFilterStatus : true))
+    .filter((a) => (pinnedOnlyFilter ? !!a.pinned : true))
+    .filter((a) => {
+      if (!hideFinishedFilter) return true;
+      const p = getProgress(a);
+      return !(p && p.current >= p.total);
+    })
+    .filter((a) => {
+      if (!continueWatchingFilter) return true;
+      const p = getProgress(a);
+      return !!(p && p.current > 0 && p.current < p.total);
+    });
+
+  if (currentSort === "name") {
+    list = list.slice().sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  } else if (currentSort === "status") {
+    list = list.slice().sort((a, b) => (a.status || "").localeCompare(b.status || ""));
+  } else if (currentSort === "progress") {
+    list = list.slice().sort((a, b) => {
+      const pa = getProgress(a)?.percent ?? -1;
+      const pb = getProgress(b)?.percent ?? -1;
+      return pb - pa;
+    });
+  } else {
+    list = list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  }
+
+  // التثبيت دايمًا فوق، من غير ما يلغي الترتيب التاني جوه كل مجموعة
+  const pinned = list.filter((a) => a.pinned);
+  const rest = list.filter((a) => !a.pinned);
+  return [...pinned, ...rest];
+}
+
+function render() {
+  const filtered = getFilteredSortedList();
+  emptyState.classList.toggle("hidden", filtered.length !== 0);
+  grid.innerHTML = filtered.map(buildAnimeBlock).join("");
+}
+
+// مستمع أحداث واحد بس على الشاشة كلها (Event Delegation) بدل ما كل كارت
+// ياخد مستمع لوحده، ده أخف بكتير مع عدد كبير من العناصر ومش محتاج
+// نعيد ربطه بعد كل إعادة بناء جزئية أو كاملة
+grid.addEventListener("click", (e) => {
+  if (dragState.active) return; // متجاهلش أي دوسة أثناء عملية سحب شغالة
+
+  const editBtn = e.target.closest(".card-edit-btn");
+  if (editBtn) {
+    e.stopPropagation();
+    openAnimeModal(editBtn.dataset.id);
+    return;
+  }
+
+  const noteBtn = e.target.closest(".note-btn");
+  if (noteBtn) {
+    e.stopPropagation();
+    const panel = grid.querySelector(`.notes-panel[data-id="${noteBtn.dataset.id}"]`);
+    if (panel) panel.classList.toggle("hidden");
+    return;
+  }
+
+  const titleEl = e.target.closest(".card-title");
+  if (titleEl) {
+    e.stopPropagation();
+    openDetailModal(titleEl.dataset.id);
+    return;
+  }
+
+  const card = e.target.closest(".card");
+  if (card && !editMode) {
+    const anime = animeList.find((a) => a.id === card.dataset.id);
+    if (anime) quickStatusCycle(anime);
+  }
+});
+
+// حفظ الملاحظات تلقائيًا لما تتغيّر (بس وقت وضع التعديل، لأن الـ textarea
+// مش موجودة أصلًا إلا في وضع التعديل)
+let notesSaveTimer;
+grid.addEventListener("input", (e) => {
+  const ta = e.target.closest(".notes-edit");
+  if (!ta) return;
+  clearTimeout(notesSaveTimer);
+  notesSaveTimer = setTimeout(() => {
+    const anime = animeList.find((a) => a.id === ta.dataset.id);
+    if (anime) {
+      anime.notes = ta.value;
+      dbPut(anime).catch(() => {});
+    }
+  }, 400);
+});
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -243,43 +608,234 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-const statusCycleOrder = ["", "unwatched", "finished_watched", "finished_boring", "ecchi_unwatched", "ecchi_finished"];
+/* ============ السحب والترتيب اليدوي (Pointer Events - خفيف ومناسب للمس) ============
+   شغّال بس في وضع التعديل، وبيحرك العناصر في الـ DOM مباشرة أثناء السحب
+   من غير أي كتابة في القاعدة إلا لما تسيب إصبعك (عشان مايبقاش فيه أي تهنيج أثناء الحركة) */
+const dragState = { active: false, blockEl: null, startY: 0, startIndex: 0 };
+
+grid.addEventListener("pointerdown", (e) => {
+  const handle = e.target.closest(".drag-handle");
+  if (!handle || !editMode) return;
+  const block = handle.closest(".anime-block");
+  if (!block) return;
+
+  dragState.active = true;
+  dragState.blockEl = block;
+  dragState.startY = e.clientY;
+  block.classList.add("dragging");
+  handle.setPointerCapture(e.pointerId);
+});
+
+grid.addEventListener("pointermove", (e) => {
+  if (!dragState.active || !dragState.blockEl) return;
+  const dragged = dragState.blockEl;
+  const siblings = Array.from(grid.querySelectorAll(".anime-block")).filter((el) => el !== dragged);
+
+  // نلاقي أول عنصر تحت الإصبع اللي منتصفه أسفل نقطة اللمس، ونحط الكارت المسحوب قبله
+  let targetEl = null;
+  for (const sib of siblings) {
+    const rect = sib.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      targetEl = sib;
+      break;
+    }
+  }
+
+  if (targetEl) {
+    if (targetEl !== dragged.nextElementSibling) grid.insertBefore(dragged, targetEl);
+  } else {
+    // مفيش عنصر تحت الإصبع (يعني وصلنا لآخر القائمة)، نحط الكارت في الآخر
+    if (grid.lastElementChild !== dragged) grid.appendChild(dragged);
+  }
+});
+
+grid.addEventListener("pointerup", async () => {
+  if (!dragState.active) return;
+  dragState.active = false;
+  if (dragState.blockEl) dragState.blockEl.classList.remove("dragging");
+  dragState.blockEl = null;
+
+  // نحفظ الترتيب الجديد بس للعناصر الظاهرة دلوقتي على الشاشة
+  const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+  const updates = [];
+  blocks.forEach((block, index) => {
+    const anime = animeList.find((a) => a.id === block.dataset.blockId);
+    if (anime && anime.order !== index) {
+      anime.order = index;
+      updates.push(anime);
+    }
+  });
+
+  if (updates.length > 0) {
+    await dbBulkPutBatched(updates, 25);
+    showToast(t("toast_reorder_saved"));
+  }
+});
+
+// تحديث سريع لكارت واحد بس، من غير إعادة بناء الشاشة كلها
+function tryUpdateCardInPlace(anime) {
+  if (selectedFilterStatus && anime.status !== selectedFilterStatus) return false;
+
+  const card = grid.querySelector(`.card[data-id="${anime.id}"]`);
+  if (!card) return false;
+
+  const chip = card.querySelector(".status-chip");
+  if (!chip) return false;
+
+  const meta = getStatusMeta(anime.status);
+  chip.textContent = meta.label;
+  chip.style.color = meta.color;
+  chip.style.borderColor = hexToRgba(meta.color, 0.4);
+  chip.style.background = hexToRgba(meta.color, 0.1);
+  return true;
+}
+
+// تحديث كارت موجود بالكامل (بعد تعديل اسم/صورة) من غير إعادة بناء الشاشة كلها
+function tryReplaceBlockInPlace(anime) {
+  const query = searchInput.value.trim().toLowerCase();
+  if (query && !anime.name.toLowerCase().includes(query)) return false;
+  if (selectedFilterStatus && anime.status !== selectedFilterStatus) return false;
+
+  const block = grid.querySelector(`.anime-block[data-block-id="${anime.id}"]`);
+  if (!block) return false;
+
+  const wasNotesOpen = !block.querySelector(".notes-panel")?.classList.contains("hidden");
+  block.innerHTML = buildBlockInner(anime);
+  if (wasNotesOpen) block.querySelector(".notes-panel").classList.remove("hidden");
+  return true;
+}
+
+// إزالة كارت واحد من الشاشة من غير إعادة بناء كامل
+function removeBlockInPlace(id) {
+  const block = grid.querySelector(`.anime-block[data-block-id="${id}"]`);
+  if (block) block.remove();
+  emptyState.classList.toggle("hidden", grid.children.length !== 0);
+}
+
 async function quickStatusCycle(anime) {
-  const idx = statusCycleOrder.indexOf(anime.status || "");
-  const next = statusCycleOrder[(idx + 1) % statusCycleOrder.length];
+  const order = ["", ...appSettings.statuses.map((s) => s.key)];
+  const idx = order.indexOf(anime.status || "");
+  const next = order[(idx + 1) % order.length];
   anime.status = next;
-  await dbPut(anime);
-  render();
+
+  const updatedInPlace = tryUpdateCardInPlace(anime);
+  if (!updatedInPlace) render();
+
+  dbPut(anime).catch(() => {});
 }
 
 /* ============ وضع التعديل ============ */
 function setEditMode(value) {
   editMode = value;
-  toggleEditLabel.textContent = editMode ? "إنهاء التعديل" : "تعديل";
+  toggleEditLabel.textContent = editMode ? t("menu_edit_done") : t("menu_edit");
   fabAdd.classList.toggle("hidden", !editMode);
   render();
+}
+
+/* ============ عنصر واجهة الشرائح الملونة (Segmented Control) ============ */
+function hexToRgba(hex, alpha) {
+  if (!hex || !hex.startsWith("#")) return `rgba(99,93,120,${alpha})`;
+  let c = hex.slice(1);
+  if (c.length === 3) c = c.split("").map((ch) => ch + ch).join("");
+  const num = parseInt(c, 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function renderSegmented(container, options, selectedKey, onSelect) {
+  container.innerHTML = "";
+  options.forEach((opt) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    const isActive = opt.key === selectedKey;
+    chip.className = "seg-chip" + (isActive ? " active" : "");
+    if (isActive) {
+      chip.style.background = opt.color;
+      chip.style.color = "#0e0c14";
+      chip.style.borderColor = opt.color;
+    } else {
+      chip.style.background = hexToRgba(opt.color, 0.12);
+      chip.style.color = opt.color;
+      chip.style.borderColor = hexToRgba(opt.color, 0.45);
+    }
+    chip.textContent = opt.label;
+    chip.addEventListener("click", () => onSelect(opt.key));
+    container.appendChild(chip);
+  });
+}
+
+function getStatusOptions(includeAll) {
+  const base = appSettings.statuses.map((s) => ({ key: s.key, label: s.label, color: s.color }));
+  const none = { key: "", label: includeAll ? t("status_all") : t("status_none"), color: "#635d78" };
+  return [none, ...base];
+}
+
+function renderFilterSegments() {
+  renderSegmented(filterSegments, getStatusOptions(true), selectedFilterStatus, (key) => {
+    selectedFilterStatus = key;
+    renderFilterSegments();
+    render();
+  });
+}
+
+function renderAnimeStatusSegments() {
+  const container = document.getElementById("statusSegments");
+  renderSegmented(container, getStatusOptions(false), selectedAnimeStatus, (key) => {
+    selectedAnimeStatus = key;
+    renderAnimeStatusSegments();
+  });
 }
 
 /* ============ مودال إضافة / تعديل أنمي ============ */
 const animeModalOverlay = document.getElementById("animeModalOverlay");
 const animeModalTitle = document.getElementById("animeModalTitle");
 const nameInput = document.getElementById("nameInput");
-const statusInput = document.getElementById("statusInput");
 const imageInput = document.getElementById("imageInput");
 const imagePicker = document.getElementById("imagePicker");
 const imagePreview = document.getElementById("imagePreview");
 const imagePlaceholder = document.getElementById("imagePlaceholder");
 const deleteAnimeBtn = document.getElementById("deleteAnimeBtn");
+const totalEpisodesInput = document.getElementById("totalEpisodesInput");
+const currentEpisodeDisplay = document.getElementById("currentEpisodeDisplay");
+const seasonInput = document.getElementById("seasonInput");
+const yearInput = document.getElementById("yearInput");
+const pinnedInput = document.getElementById("pinnedInput");
+const ratingStarsEl = document.getElementById("ratingStars");
+let modalCurrentEpisode = 0;
+let modalRating = 0;
+
+function renderStars(container, value, editable, onSelect) {
+  container.innerHTML = "";
+  for (let i = 1; i <= 5; i++) {
+    const star = document.createElement("span");
+    star.className = "star" + (i <= value ? " filled" : "");
+    star.textContent = i <= value ? "⭐" : "☆";
+    if (editable) {
+      star.addEventListener("click", () => onSelect(i === value ? 0 : i));
+    }
+    container.appendChild(star);
+  }
+}
 
 function openAnimeModal(id = null) {
   currentEditId = id;
   pickedImageDataUrl = null;
+  hideProgress("image");
 
   if (id) {
     const anime = animeList.find((a) => a.id === id);
-    animeModalTitle.textContent = "تعديل الأنمي";
+    animeModalTitle.textContent = t("modal_edit_title");
     nameInput.value = anime.name;
-    statusInput.value = anime.status || "";
+    selectedAnimeStatus = anime.status || "";
+    totalEpisodesInput.value = anime.totalEpisodes || "";
+    modalCurrentEpisode = Number(anime.currentEpisode) || 0;
+    seasonInput.value = anime.season || "";
+    yearInput.value = anime.year || "";
+    pinnedInput.checked = !!anime.pinned;
+    modalRating = Number(anime.rating) || 0;
     if (anime.image) {
       imagePreview.src = anime.image;
       imagePreview.classList.remove("hidden");
@@ -290,14 +846,29 @@ function openAnimeModal(id = null) {
     }
     deleteAnimeBtn.classList.remove("hidden");
   } else {
-    animeModalTitle.textContent = "إضافة أنمي";
+    animeModalTitle.textContent = t("modal_add_title");
     nameInput.value = "";
-    statusInput.value = "";
+    selectedAnimeStatus = "";
+    totalEpisodesInput.value = "";
+    modalCurrentEpisode = 0;
+    seasonInput.value = "";
+    yearInput.value = "";
+    pinnedInput.checked = false;
+    modalRating = 0;
     imagePreview.classList.add("hidden");
     imagePlaceholder.classList.remove("hidden");
     deleteAnimeBtn.classList.add("hidden");
   }
 
+  currentEpisodeDisplay.textContent = modalCurrentEpisode;
+  function refreshModalStars() {
+    renderStars(ratingStarsEl, modalRating, true, (v) => {
+      modalRating = v;
+      refreshModalStars();
+    });
+  }
+  refreshModalStars();
+  renderAnimeStatusSegments();
   animeModalOverlay.classList.remove("hidden");
 }
 
@@ -307,60 +878,133 @@ function closeAnimeModal() {
   pickedImageDataUrl = null;
 }
 
+document.getElementById("episodeMinusBtn").addEventListener("click", () => {
+  modalCurrentEpisode = Math.max(0, modalCurrentEpisode - 1);
+  currentEpisodeDisplay.textContent = modalCurrentEpisode;
+});
+document.getElementById("episodePlusBtn").addEventListener("click", () => {
+  modalCurrentEpisode += 1;
+  currentEpisodeDisplay.textContent = modalCurrentEpisode;
+});
+
 imagePicker.addEventListener("click", () => imageInput.click());
 
-imageInput.addEventListener("change", () => {
+imageInput.addEventListener("change", async () => {
   const file = imageInput.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    pickedImageDataUrl = reader.result;
+  try {
+    pickedImageDataUrl = await resizeImageFile(file, 480, 0.72, (p, label) => {
+      setProgress("image", p, label);
+    });
     imagePreview.src = pickedImageDataUrl;
     imagePreview.classList.remove("hidden");
     imagePlaceholder.classList.add("hidden");
-  };
-  reader.readAsDataURL(file);
+    setTimeout(() => hideProgress("image"), 500);
+  } catch (e) {
+    hideProgress("image");
+    showToast(t("toast_image_error"));
+  }
 });
+
+// لو وصلت للحلقة الأخيرة، نحاول نحوّل الحالة تلقائيًا لأول حالة أساسها
+// "منتهي" (finished_watched)، لو المستخدم حذفها أو غيّرها بنتجاهل الخطوة بأمان
+function maybeAutoFinish(anime) {
+  const total = Number(anime.totalEpisodes) || 0;
+  if (total > 0 && Number(anime.currentEpisode) >= total) {
+    const finishedStatus = appSettings.statuses.find((s) => s.key === "finished_watched");
+    if (finishedStatus) anime.status = finishedStatus.key;
+  }
+}
 
 document.getElementById("saveAnimeBtn").addEventListener("click", async () => {
   const name = nameInput.value.trim();
   if (!name) {
-    showToast("اكتب اسم الأنمي الأول");
+    showToast(t("toast_name_missing"));
     return;
   }
 
+  let isNewItem = false;
+  let savedAnime;
+  const changeType = currentEditId ? "edited" : "added";
+
+  const commonFields = {
+    name,
+    status: selectedAnimeStatus,
+    totalEpisodes: totalEpisodesInput.value ? Number(totalEpisodesInput.value) : 0,
+    currentEpisode: modalCurrentEpisode,
+    season: seasonInput.value ? Number(seasonInput.value) : null,
+    year: yearInput.value ? Number(yearInput.value) : null,
+    pinned: pinnedInput.checked,
+    rating: modalRating,
+  };
+
   if (currentEditId) {
-    const anime = animeList.find((a) => a.id === currentEditId);
-    anime.name = name;
-    anime.status = statusInput.value;
-    if (pickedImageDataUrl) anime.image = pickedImageDataUrl;
-    await dbPut(anime);
+    savedAnime = animeList.find((a) => a.id === currentEditId);
+    Object.assign(savedAnime, commonFields);
+    if (pickedImageDataUrl) savedAnime.image = pickedImageDataUrl;
+    maybeAutoFinish(savedAnime);
+    await dbPut(savedAnime);
   } else {
-    const newItem = {
+    isNewItem = true;
+    savedAnime = {
       id: "a_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
-      name,
-      status: statusInput.value,
+      ...commonFields,
       image: pickedImageDataUrl || null,
+      notes: "",
+      lastWatchedAt: null,
       order: animeList.length,
       createdAt: Date.now(),
     };
-    animeList.push(newItem);
-    await dbPut(newItem);
+    maybeAutoFinish(savedAnime);
+    animeList.push(savedAnime);
+    await dbPut(savedAnime);
   }
 
-  await reloadFromDB();
+  if (isNewItem || !tryReplaceBlockInPlace(savedAnime)) {
+    render();
+  }
+
+  await logRecentChange(changeType, name);
   closeAnimeModal();
-  showToast("تم الحفظ ✅");
+  showToast(t("toast_saved"));
 });
 
 document.getElementById("cancelAnimeBtn").addEventListener("click", closeAnimeModal);
 
-deleteAnimeBtn.addEventListener("click", async () => {
+// حذف مع فرصة تراجع: العنصر بيتشال من الشاشة فورًا، لكن الحذف الفعلي من
+// القاعدة بيستنى شوية ثواني عشان تقدر تتراجع لو دوست غلط
+let pendingDelete = null;
+let pendingDeleteTimer = null;
+
+deleteAnimeBtn.addEventListener("click", () => {
   if (!currentEditId) return;
-  await dbDelete(currentEditId);
-  await reloadFromDB();
+  const idToDelete = currentEditId;
+  const animeSnapshot = animeList.find((a) => a.id === idToDelete);
+  if (!animeSnapshot) return;
+
+  animeList = animeList.filter((a) => a.id !== idToDelete);
+  removeBlockInPlace(idToDelete);
   closeAnimeModal();
-  showToast("تم الحذف 🗑️");
+
+  pendingDelete = animeSnapshot;
+  clearTimeout(pendingDeleteTimer);
+  pendingDeleteTimer = setTimeout(async () => {
+    if (pendingDelete && pendingDelete.id === idToDelete) {
+      await dbDelete(idToDelete);
+      await logRecentChange("edited", `${t("btn_delete")}: ${animeSnapshot.name}`);
+      pendingDelete = null;
+    }
+  }, 5000);
+
+  showToastWithAction(t("toast_deleted_undo"), t("btn_undo"), () => {
+    clearTimeout(pendingDeleteTimer);
+    if (pendingDelete) {
+      animeList.push(pendingDelete);
+      dbPut(pendingDelete).catch(() => {});
+      pendingDelete = null;
+      render();
+    }
+  });
 });
 
 fabAdd.addEventListener("click", () => openAnimeModal(null));
@@ -382,17 +1026,42 @@ toggleEditBtn.addEventListener("click", () => {
 });
 
 /* ============ البحث والفلترة ============ */
-searchInput.addEventListener("input", render);
-filterSelect.addEventListener("change", render);
+let searchDebounceTimer;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(render, 220);
+});
 
 /* ============ توست ============ */
 let toastTimer;
 function showToast(msg) {
   const toast = document.getElementById("toast");
-  toast.textContent = msg;
+  const msgEl = document.getElementById("toastMessage");
+  const actionBtn = document.getElementById("toastActionBtn");
+  msgEl.textContent = msg;
+  actionBtn.classList.add("hidden");
+  actionBtn.onclick = null;
   toast.classList.remove("hidden");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.add("hidden"), 2200);
+}
+
+// توست فيه زرار فعل إضافي (زي "تراجع")، بيفضل ظاهر شوية أطول
+function showToastWithAction(msg, actionLabel, onAction) {
+  const toast = document.getElementById("toast");
+  const msgEl = document.getElementById("toastMessage");
+  const actionBtn = document.getElementById("toastActionBtn");
+  msgEl.textContent = msg;
+  actionBtn.textContent = actionLabel;
+  actionBtn.classList.remove("hidden");
+  actionBtn.onclick = () => {
+    onAction();
+    toast.classList.add("hidden");
+    clearTimeout(toastTimer);
+  };
+  toast.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.add("hidden"), 5000);
 }
 
 /* ============ إعادة التحميل من القاعدة ============ */
@@ -401,50 +1070,8 @@ async function reloadFromDB() {
   render();
 }
 
-/* ================================================================
-   إعدادات التطبيق: صورة/اسم/ألوان
-   ================================================================ */
-function applyAppSettingsToUI() {
-  appTitleEl.textContent = appSettings.appName || DEFAULT_APP_NAME;
-  document.title = appSettings.appName || DEFAULT_APP_NAME;
-
-  if (appSettings.logo) {
-    logoDotEl.outerHTML = `<img id="logoDot" class="logo-img" src="${appSettings.logo}" alt="logo" />`;
-  } else {
-    const current = document.getElementById("logoDot");
-    if (current.tagName === "IMG") {
-      current.outerHTML = `<span id="logoDot" class="logo-dot"></span>`;
-    }
-  }
-
-  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
-  Object.keys(colors).forEach((varName) => {
-    document.documentElement.style.setProperty(varName, colors[varName]);
-  });
-}
-
-async function loadAppSettingsFromDB() {
-  const rows = await dbSettingsGetAll();
-  const map = {};
-  rows.forEach((r) => { map[r.key] = r.value; });
-
-  appSettings = {
-    appName: map.appName || DEFAULT_APP_NAME,
-    logo: map.logo || null,
-    gallery: map.gallery || [],
-    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
-  };
-  applyAppSettingsToUI();
-}
-
-async function saveAppSettingKey(key, value) {
-  appSettings[key] = value;
-  await dbSettingsPut(key, value);
-}
-
-/* ---- مودال صورة التطبيق ---- */
+/* ============ مودال صورة التطبيق ============ */
 const logoModalOverlay = document.getElementById("logoModalOverlay");
-const uploadLogoBtn = document.getElementById("uploadLogoBtn");
 const logoImageInput = document.getElementById("logoImageInput");
 const logoGallery = document.getElementById("logoGallery");
 
@@ -456,69 +1083,72 @@ document.getElementById("changeLogoBtn").addEventListener("click", () => {
 document.getElementById("closeLogoModalBtn").addEventListener("click", () => {
   logoModalOverlay.classList.add("hidden");
 });
-
-uploadLogoBtn.addEventListener("click", () => logoImageInput.click());
-
-logoImageInput.addEventListener("change", async () => {
-  const files = Array.from(logoImageInput.files || []);
-  if (files.length === 0) return;
-
-  const readAsDataUrl = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-
-  const newImages = await Promise.all(files.map(readAsDataUrl));
-  appSettings.gallery = [...appSettings.gallery, ...newImages];
-  await dbSettingsPut("gallery", appSettings.gallery);
-  renderLogoGallery();
-  logoImageInput.value = "";
-  showToast("تم رفع الصور ✅");
-});
+document.getElementById("uploadLogoBtn").addEventListener("click", () => logoImageInput.click());
 
 function renderLogoGallery() {
   logoGallery.innerHTML = "";
-  if (appSettings.gallery.length === 0) {
-    logoGallery.innerHTML = `<p class="hint-text">لسه مفيش صور مرفوعة.</p>`;
-    return;
-  }
   appSettings.gallery.forEach((imgSrc, idx) => {
     const item = document.createElement("div");
-    item.className = "logo-gallery-item" + (imgSrc === appSettings.logo ? " active" : "");
+    item.className = "logo-gallery-item" + (appSettings.logo === imgSrc ? " active" : "");
     item.innerHTML = `
-      <img src="${imgSrc}" alt="logo option" />
-      <button class="logo-delete-btn" data-idx="${idx}" aria-label="حذف">✕</button>
+      <img src="${imgSrc}" alt="logo option" loading="lazy" decoding="async" />
+      <button class="logo-delete-btn" data-idx="${idx}">
+        <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
     `;
     item.querySelector("img").addEventListener("click", async () => {
-      await saveAppSettingKey("logo", imgSrc);
-      applyAppSettingsToUI();
+      appSettings.logo = imgSrc;
+      await dbSettingsPut("logo", appSettings.logo);
+      applyAppIdentity();
       renderLogoGallery();
-      showToast("اتغيرت صورة التطبيق ✅");
+      showToast(t("toast_logo_changed"));
     });
     item.querySelector(".logo-delete-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
-      const wasActive = appSettings.gallery[idx] === appSettings.logo;
       appSettings.gallery.splice(idx, 1);
+      if (appSettings.logo === imgSrc) appSettings.logo = null;
       await dbSettingsPut("gallery", appSettings.gallery);
-      if (wasActive) {
-        await saveAppSettingKey("logo", null);
-        applyAppSettingsToUI();
-      }
+      await dbSettingsPut("logo", appSettings.logo);
+      applyAppIdentity();
       renderLogoGallery();
     });
     logoGallery.appendChild(item);
   });
 }
 
-/* ---- مودال اسم التطبيق ---- */
+logoImageInput.addEventListener("change", async () => {
+  const files = Array.from(logoImageInput.files || []);
+  if (files.length === 0) return;
+
+  try {
+    const newImages = [];
+    for (let i = 0; i < files.length; i++) {
+      const base = (i / files.length) * 100;
+      const img = await resizeImageFile(files[i], 480, 0.72, (p) => {
+        setProgress("logo", base + p / files.length, `جاري رفع ${i + 1}/${files.length}...`);
+      });
+      newImages.push(img);
+    }
+    appSettings.gallery = [...appSettings.gallery, ...newImages];
+    await dbSettingsPut("gallery", appSettings.gallery);
+    renderLogoGallery();
+    logoImageInput.value = "";
+    setProgress("logo", 100, "تم ✅");
+    setTimeout(() => hideProgress("logo"), 500);
+    showToast(t("toast_images_uploaded"));
+  } catch (e) {
+    hideProgress("logo");
+    showToast(t("toast_images_error"));
+  }
+});
+
+/* ============ مودال اسم التطبيق ============ */
 const nameModalOverlay = document.getElementById("nameModalOverlay");
 const appNameInput = document.getElementById("appNameInput");
 
 document.getElementById("changeNameBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
-  appNameInput.value = appSettings.appName || DEFAULT_APP_NAME;
+  appNameInput.value = appSettings.appName;
   nameModalOverlay.classList.remove("hidden");
 });
 document.getElementById("cancelNameBtn").addEventListener("click", () => {
@@ -527,76 +1157,176 @@ document.getElementById("cancelNameBtn").addEventListener("click", () => {
 document.getElementById("saveNameBtn").addEventListener("click", async () => {
   const newName = appNameInput.value.trim();
   if (!newName) {
-    showToast("اكتب اسم الأول");
+    showToast(t("toast_name_missing"));
     return;
   }
-  await saveAppSettingKey("appName", newName);
-  applyAppSettingsToUI();
+  appSettings.appName = newName;
+  await dbSettingsPut("appName", newName);
+  applyAppIdentity();
   nameModalOverlay.classList.add("hidden");
-  showToast("تم تغيير الاسم ✅");
+  showToast(t("toast_name_saved"));
 });
 
-/* ---- مودال تعديل الألوان ---- */
+/* ============ مودال تعديل الألوان ============ */
 const colorsModalOverlay = document.getElementById("colorsModalOverlay");
 const colorsList = document.getElementById("colorsList");
+let tempColors = {};
 
 document.getElementById("editColorsBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
+  tempColors = { ...appSettings.colors };
   renderColorsList();
   colorsModalOverlay.classList.remove("hidden");
 });
 
 function renderColorsList() {
   colorsList.innerHTML = "";
-  const colors = { ...DEFAULT_COLORS, ...(appSettings.colors || {}) };
-  Object.keys(DEFAULT_COLORS).forEach((varName) => {
+  Object.keys(DEFAULT_COLORS).forEach((key) => {
     const row = document.createElement("div");
     row.className = "color-row";
     row.innerHTML = `
-      <span class="color-row-label">${COLOR_LABELS[varName] || varName}</span>
-      <input type="color" class="color-swatch" data-var="${varName}" value="${colors[varName]}" />
-      <input type="text" class="color-hex text-field" data-var="${varName}" value="${colors[varName]}" />
+      <span class="color-row-label">${COLOR_LABELS[key] || key}</span>
+      <input type="color" value="${tempColors[key]}" data-key="${key}" />
     `;
-    const swatch = row.querySelector(".color-swatch");
-    const hex = row.querySelector(".color-hex");
-    swatch.addEventListener("input", () => {
-      hex.value = swatch.value;
-      document.documentElement.style.setProperty(varName, swatch.value);
-    });
-    hex.addEventListener("input", () => {
-      if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(hex.value)) {
-        swatch.value = hex.value.length === 4
-          ? "#" + [...hex.value.slice(1)].map((c) => c + c).join("")
-          : hex.value;
-        document.documentElement.style.setProperty(varName, hex.value);
-      }
+    row.querySelector("input").addEventListener("input", (e) => {
+      tempColors[key] = e.target.value;
+      document.documentElement.style.setProperty(key, e.target.value);
     });
     colorsList.appendChild(row);
   });
 }
 
 document.getElementById("saveColorsBtn").addEventListener("click", async () => {
-  const newColors = {};
-  colorsList.querySelectorAll(".color-hex").forEach((input) => {
-    newColors[input.dataset.var] = input.value;
-  });
-  await saveAppSettingKey("colors", newColors);
+  appSettings.colors = { ...tempColors };
+  await dbSettingsPut("colors", appSettings.colors);
   colorsModalOverlay.classList.add("hidden");
-  showToast("تم حفظ الألوان ✅");
+  showToast(t("toast_colors_saved"));
 });
 
-document.getElementById("resetColorsBtn").addEventListener("click", async () => {
-  await saveAppSettingKey("colors", { ...DEFAULT_COLORS });
-  applyAppSettingsToUI();
+document.getElementById("resetColorsBtn").addEventListener("click", () => {
+  tempColors = { ...DEFAULT_COLORS };
+  applyColorsPreview();
   renderColorsList();
-  showToast("رجعنا الألوان الافتراضية");
+  showToast(t("toast_colors_reset"));
 });
 
-// إغلاق المودالات الجديدة بالدوس برة (بنفس سلوك باقي المودالات)
-[logoModalOverlay, nameModalOverlay, colorsModalOverlay].forEach((overlay) => {
-  overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.classList.add("hidden");
+function applyColorsPreview() {
+  Object.entries(tempColors).forEach(([key, value]) => {
+    document.documentElement.style.setProperty(key, value);
   });
+}
+
+/* ============ مودال تعديل النصوص ============ */
+const textsModalOverlay = document.getElementById("textsModalOverlay");
+const textsList = document.getElementById("textsList");
+let tempTexts = {};
+
+const TEXT_GROUPS_ORDER = Object.keys(DEFAULT_TEXTS);
+
+document.getElementById("editTextsBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  tempTexts = { ...appSettings.texts };
+  renderTextsList();
+  textsModalOverlay.classList.remove("hidden");
+});
+
+function renderTextsList() {
+  textsList.innerHTML = "";
+  TEXT_GROUPS_ORDER.forEach((key) => {
+    const row = document.createElement("div");
+    row.className = "text-row";
+    row.innerHTML = `
+      <label class="field-label">${key}</label>
+      <input type="text" class="text-field" value="${escapeHtml(tempTexts[key] ?? "")}" data-key="${key}" />
+    `;
+    row.querySelector("input").addEventListener("input", (e) => {
+      tempTexts[key] = e.target.value;
+    });
+    textsList.appendChild(row);
+  });
+}
+
+document.getElementById("saveTextsBtn").addEventListener("click", async () => {
+  appSettings.texts = { ...tempTexts };
+  await dbSettingsPut("texts", appSettings.texts);
+  applyTexts();
+  renderFilterSegments();
+  textsModalOverlay.classList.add("hidden");
+  showToast(t("toast_texts_saved"));
+});
+
+document.getElementById("resetTextsBtn").addEventListener("click", () => {
+  tempTexts = { ...DEFAULT_TEXTS };
+  renderTextsList();
+  showToast(t("toast_texts_reset"));
+});
+
+/* ============ مودال تعديل الحالات ============ */
+const statusesModalOverlay = document.getElementById("statusesModalOverlay");
+const statusesList = document.getElementById("statusesList");
+const newStatusColor = document.getElementById("newStatusColor");
+const newStatusLabel = document.getElementById("newStatusLabel");
+
+document.getElementById("editStatusesBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  renderStatusesList();
+  statusesModalOverlay.classList.remove("hidden");
+});
+document.getElementById("closeStatusesBtn").addEventListener("click", () => {
+  statusesModalOverlay.classList.add("hidden");
+});
+
+function renderStatusesList() {
+  statusesList.innerHTML = "";
+  appSettings.statuses.forEach((s, idx) => {
+    const row = document.createElement("div");
+    row.className = "status-row";
+    row.innerHTML = `
+      <input type="color" value="${s.color}" data-idx="${idx}" class="status-color-input" />
+      <input type="text" value="${escapeHtml(s.label)}" data-idx="${idx}" class="text-field status-label-input" />
+      <button class="status-delete-btn" data-idx="${idx}">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
+    `;
+    row.querySelector(".status-color-input").addEventListener("input", async (e) => {
+      appSettings.statuses[idx].color = e.target.value;
+      await dbSettingsPut("statuses", appSettings.statuses);
+      render();
+    });
+    row.querySelector(".status-label-input").addEventListener("change", async (e) => {
+      appSettings.statuses[idx].label = e.target.value.trim() || s.label;
+      await dbSettingsPut("statuses", appSettings.statuses);
+      render();
+    });
+    row.querySelector(".status-delete-btn").addEventListener("click", async () => {
+      appSettings.statuses.splice(idx, 1);
+      await dbSettingsPut("statuses", appSettings.statuses);
+      renderStatusesList();
+      renderFilterSegments();
+      render();
+      showToast(t("toast_status_deleted"));
+    });
+    statusesList.appendChild(row);
+  });
+}
+
+document.getElementById("addStatusBtn").addEventListener("click", async () => {
+  const label = newStatusLabel.value.trim();
+  if (!label) {
+    showToast(t("toast_status_name_missing"));
+    return;
+  }
+  const newStatus = {
+    key: "s_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+    label,
+    color: newStatusColor.value,
+  };
+  appSettings.statuses.push(newStatus);
+  await dbSettingsPut("statuses", appSettings.statuses);
+  newStatusLabel.value = "";
+  renderStatusesList();
+  renderFilterSegments();
+  showToast(t("toast_status_added"));
 });
 
 /* ================================================================
@@ -617,9 +1347,15 @@ async function deriveKey(password, saltBytes) {
 }
 
 function bufToBase64(buf) {
-  let binary = "";
+  // معالجة البيانات على شكل كتل كبيرة (32KB في المرة) بدل بايت بايت،
+  // ده أسرع بمراحل ويمنع تعليق الجهاز مع الملفات الكبيرة عند التشفير
   const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const chunkSize = 0x8000; // 32768 بايت لكل كتلة (آمن ومايتعديش حد الاستدعاء)
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk);
+  }
   return btoa(binary);
 }
 function base64ToBuf(b64) {
@@ -665,6 +1401,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   exportPasswordWrap.classList.add("hidden");
   exportPassword.value = "";
   exportPasswordConfirm.value = "";
+  hideProgress("export");
   exportModalOverlay.classList.remove("hidden");
 });
 
@@ -681,14 +1418,16 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
 
   if (useEncryption) {
     if (exportPassword.value.length < 4) {
-      showToast("كلمة السر لازم تكون 4 حروف على الأقل");
+      showToast(t("toast_password_short"));
       return;
     }
     if (exportPassword.value !== exportPasswordConfirm.value) {
-      showToast("كلمتا السر مش متطابقتين");
+      showToast(t("toast_password_mismatch"));
       return;
     }
   }
+
+  setProgress("export", 10, "جاري تجهيز البيانات...");
 
   const exportData = {
     appName: "anime-tracker",
@@ -699,12 +1438,17 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   };
   const jsonString = JSON.stringify(exportData);
 
+  setProgress("export", 40, "جاري التجهيز...");
+
   let fileContent;
   if (useEncryption) {
+    setProgress("export", 60, "جاري التشفير...");
     fileContent = await encryptJSON(jsonString, exportPassword.value);
   } else {
     fileContent = { encrypted: false, data: jsonString };
   }
+
+  setProgress("export", 85, "جاري حفظ الملف...");
 
   const blob = new Blob([JSON.stringify(fileContent)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -717,16 +1461,24 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 
-  exportModalOverlay.classList.add("hidden");
-  showToast("تم تصدير الملف ✅");
+  setProgress("export", 100, "تم ✅");
+  setTimeout(() => {
+    hideProgress("export");
+    exportModalOverlay.classList.add("hidden");
+  }, 500);
+
+  // نسجّل وقت آخر تصدير ناجح عشان تذكير النسخة الاحتياطية يحسب صح
+  appSettings.backupReminder.lastExportAt = Date.now();
+  await dbSettingsPut("backupReminder", appSettings.backupReminder);
+  backupBannerDismissedThisSession = false;
+  checkBackupReminder();
+
+  showToast(t("toast_export_done"));
 });
 
 /* ============ مودال الاستيراد ============ */
 const importModalOverlay = document.getElementById("importModalOverlay");
 const importFileInput = document.getElementById("importFileInput");
-const importFileLabel = document.getElementById("importFileLabel");
-const importPathInput = document.getElementById("importPathInput");
-const loadFromPathBtn = document.getElementById("loadFromPathBtn");
 const importPasswordWrap = document.getElementById("importPasswordWrap");
 const importPassword = document.getElementById("importPassword");
 const importError = document.getElementById("importError");
@@ -735,11 +1487,10 @@ let pendingImportPayload = null;
 document.getElementById("importBtn").addEventListener("click", () => {
   dropdownMenu.classList.add("hidden");
   importFileInput.value = "";
-  importFileLabel.textContent = "اختيار ملف";
-  importPathInput.value = "";
   importPassword.value = "";
   importPasswordWrap.classList.add("hidden");
   importError.classList.add("hidden");
+  hideProgress("import");
   pendingImportPayload = null;
   importModalOverlay.classList.remove("hidden");
 });
@@ -748,65 +1499,53 @@ document.getElementById("cancelImportBtn").addEventListener("click", () => {
   importModalOverlay.classList.add("hidden");
 });
 
-function parsePendingImportText(text) {
-  try {
-    pendingImportPayload = JSON.parse(text);
-    importPasswordWrap.classList.toggle("hidden", !pendingImportPayload.encrypted);
-    importError.classList.add("hidden");
-  } catch (e) {
-    importError.textContent = "الملف ده تالف أو مش بصيغة صحيحة";
-    importError.classList.remove("hidden");
-    pendingImportPayload = null;
-  }
-}
-
 importFileInput.addEventListener("change", async () => {
   const file = importFileInput.files[0];
   if (!file) return;
-  importFileLabel.textContent = file.name;
+
+  const sizeMB = file.size / (1024 * 1024);
+  if (sizeMB > 25) {
+    importError.textContent = `الملف حجمه ${sizeMB.toFixed(1)} ميجا، وده كبير على إمكانيات الجهاز وممكن يسبب تهنيج. يفضّل تستخدم ملف أصغر من 25 ميجا.`;
+    importError.classList.remove("hidden");
+  } else {
+    importError.classList.add("hidden");
+  }
+
   const text = await file.text();
-  parsePendingImportText(text);
+  try {
+    pendingImportPayload = JSON.parse(text);
+    importPasswordWrap.classList.toggle("hidden", !pendingImportPayload.encrypted);
+  } catch (e) {
+    importError.textContent = t("import_error_invalid_file");
+    importError.classList.remove("hidden");
+    pendingImportPayload = null;
+  }
 });
 
-// تحميل من مسار مكتوب يدويًا (بيشتغل لو التطبيق شغال جوه متصفح عادي بيدعم قراءة ملفات محلية،
-// أو لو اتضاف لاحقًا دعم Capacitor Filesystem. حاليًا: محاولة عبر fetch على مسار file:// كـ fallback)
-loadFromPathBtn.addEventListener("click", async () => {
-  const path = importPathInput.value.trim();
-  if (!path) {
-    showToast("اكتب مسار الملف الأول");
-    return;
-  }
-  try {
-    const normalized = path.startsWith("/") ? "file://" + path : path;
-    const res = await fetch(normalized);
-    if (!res.ok) throw new Error("read failed");
-    const text = await res.text();
-    parsePendingImportText(text);
-    if (pendingImportPayload) showToast("تم تحميل الملف من المسار ✅");
-  } catch (e) {
-    importError.textContent = "معرفناش نقرأ الملف من المسار ده مباشرة على الجهاز ده — استخدم اختيار ملف بدلًا منه";
-    importError.classList.remove("hidden");
-  }
-});
+// استبدال atomic-ish: بياخد نسخة احتياطية في الذاكرة، ولو فشل أي جزء، بيرجّع القديم
+async function replaceAllDataBatched(newItems, onProgress) {
+  await dbClearAll();
+  await dbBulkPutBatched(newItems, 25, onProgress);
+}
 
 document.getElementById("confirmImportBtn").addEventListener("click", async () => {
   if (!pendingImportPayload) {
-    showToast("اختار ملف الأول");
+    showToast(t("toast_choose_file_first"));
     return;
   }
 
-  // نسخة احتياطية في الذاكرة من البيانات الحالية، لو حصل فشل نرجعلها بدل ما نمسحها بلا رجعة
-  const previousItems = animeList.slice();
-  const previousSettings = { ...appSettings, colors: { ...appSettings.colors }, gallery: [...appSettings.gallery] };
+  const previousItemsSnapshot = animeList.slice();
+  const previousSettingsSnapshot = { ...appSettings };
 
   try {
     let jsonString;
     if (pendingImportPayload.encrypted) {
       if (!importPassword.value) {
-        importError.textContent = "الملف محمي بكلمة سر، اكتبها الأول";
+        importError.textContent = t("import_error_password_needed");
         importError.classList.remove("hidden");
         return;
       }
+      setProgress("import", 10, "جاري فك التشفير...");
       jsonString = await decryptJSON(pendingImportPayload, importPassword.value);
     } else {
       jsonString = pendingImportPayload.data;
@@ -818,37 +1557,253 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
     }
 
     try {
-      await dbClearAll();
-      await dbBulkPutBatched(parsed.items, 25);
+      await replaceAllDataBatched(parsed.items, (done, total) => {
+        const pct = 15 + (done / total) * 80;
+        setProgress("import", pct, `جاري الاستيراد... ${done}/${total}`);
+      });
 
+      // استيراد الإعدادات لو موجودة في الملف
       if (parsed.settings) {
-        await dbSettingsClearAll();
-        const entries = Object.keys(parsed.settings).map((key) => ({ key, value: parsed.settings[key] }));
+        const entries = Object.entries(parsed.settings).map(([key, value]) => ({ key, value }));
         await dbSettingsBulkPut(entries);
       }
-    } catch (writeErr) {
-      // فشل أثناء الكتابة: نحاول نرجّع البيانات القديمة زي ما كانت
-      try {
-        await dbClearAll();
-        await dbBulkPutBatched(previousItems, 25);
-        await dbSettingsClearAll();
-        const restoreEntries = Object.keys(previousSettings).map((key) => ({ key, value: previousSettings[key] }));
-        await dbSettingsBulkPut(restoreEntries);
-      } catch (restoreErr) {
-        // لو حتى الاسترجاع فشل، على الأقل مانمسحش المتغيرات في الذاكرة
-      }
-      throw writeErr;
+
+      await loadAppSettingsFromDB();
+      await reloadFromDB();
+      renderFilterSegments();
+
+      setProgress("import", 100, "تم ✅");
+      setTimeout(() => {
+        hideProgress("import");
+        importModalOverlay.classList.add("hidden");
+      }, 500);
+      showToast(`${t("toast_saved")} (${parsed.items.length})`);
+    } catch (dbErr) {
+      // فشلت الكتابة، نرجّع القديم
+      hideProgress("import");
+      animeList = previousItemsSnapshot;
+      appSettings = previousSettingsSnapshot;
+      render();
+      applyColorsToUI();
+      applyAppIdentity();
+      applyTexts();
+      throw new Error("db-write-failed");
     }
-
-    await reloadFromDB();
-    await loadAppSettingsFromDB();
-
-    importModalOverlay.classList.add("hidden");
-    showToast(`تم استيراد ${parsed.items.length} عنصر ✅`);
   } catch (e) {
-    importError.textContent = "كلمة السر غلط أو الملف تالف أو حصلت مشكلة أثناء الاستيراد — البيانات القديمة اتحافظ عليها";
+    hideProgress("import");
+    importError.textContent = t("import_error_generic");
     importError.classList.remove("hidden");
   }
+});
+
+/* ============ مودال تفاصيل الأنمي ============ */
+const detailModalOverlay = document.getElementById("detailModalOverlay");
+let currentDetailId = null;
+
+function formatRelativeDate(ts) {
+  if (!ts) return "";
+  const diffMs = Date.now() - ts;
+  const diffDays = Math.floor(diffMs / 86400000);
+  if (diffDays <= 0) return "اليوم";
+  if (diffDays === 1) return "من يوم";
+  if (diffDays < 30) return `من ${diffDays} يوم`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `من ${diffMonths} شهر`;
+  return `من ${Math.floor(diffMonths / 12)} سنة`;
+}
+
+function openDetailModal(id) {
+  const anime = animeList.find((a) => a.id === id);
+  if (!anime) return;
+  currentDetailId = id;
+
+  document.getElementById("detailTitle").textContent = anime.name;
+
+  const imgWrap = document.getElementById("detailImageWrap");
+  imgWrap.innerHTML = anime.image
+    ? `<img src="${anime.image}" alt="${escapeHtml(anime.name)}" />`
+    : `<div class="no-image"><svg viewBox="0 0 24 24" width="34" height="34"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`;
+
+  const seasonYearEl = document.getElementById("detailSeasonYear");
+  const parts = [];
+  if (anime.season) parts.push(`الموسم ${anime.season}`);
+  if (anime.year) parts.push(anime.year);
+  seasonYearEl.textContent = parts.join(" · ");
+  seasonYearEl.classList.toggle("hidden", parts.length === 0);
+
+  const progress = getProgress(anime);
+  document.getElementById("detailProgressText").textContent = progress ? `${progress.current} / ${progress.total}` : "بدون عدد حلقات محدد";
+  document.getElementById("detailProgressPercent").textContent = progress ? `${progress.percent}%` : "";
+  document.getElementById("detailProgressFill").style.width = progress ? `${progress.percent}%` : "0%";
+
+  renderStars(document.getElementById("detailRatingStars"), Number(anime.rating) || 0, true, async (v) => {
+    anime.rating = v;
+    await dbPut(anime);
+    refreshDetailStars();
+  });
+  function refreshDetailStars() {
+    renderStars(document.getElementById("detailRatingStars"), Number(anime.rating) || 0, true, async (v) => {
+      anime.rating = v;
+      await dbPut(anime);
+      refreshDetailStars();
+    });
+  }
+
+  const pinBtn = document.getElementById("detailPinBtn");
+  pinBtn.classList.toggle("btn-active", !!anime.pinned);
+
+  const lastWatchedEl = document.getElementById("detailLastWatched");
+  lastWatchedEl.textContent = anime.lastWatchedAt ? `آخر مشاهدة: ${formatRelativeDate(anime.lastWatchedAt)}` : "";
+
+  detailModalOverlay.classList.remove("hidden");
+}
+
+document.getElementById("closeDetailBtn").addEventListener("click", () => {
+  detailModalOverlay.classList.add("hidden");
+  currentDetailId = null;
+});
+
+document.getElementById("watchedEpisodeBtn").addEventListener("click", async () => {
+  const anime = animeList.find((a) => a.id === currentDetailId);
+  if (!anime) return;
+  const total = Number(anime.totalEpisodes) || 0;
+  const current = Number(anime.currentEpisode) || 0;
+  if (total > 0 && current >= total) {
+    showToast("خلصت كل الحلقات بالفعل ✅");
+    return;
+  }
+  anime.currentEpisode = current + 1;
+  anime.lastWatchedAt = Date.now();
+  maybeAutoFinish(anime);
+  await dbPut(anime);
+  await logRecentChange("episode", anime.name);
+  openDetailModal(anime.id); // إعادة رسم شاشة التفاصيل بالأرقام الجديدة
+  tryReplaceBlockInPlace(anime); // تحديث الكارت في الخلفية لو ظاهر في القائمة
+  showToast(t("toast_episode_updated"));
+});
+
+document.getElementById("detailPinBtn").addEventListener("click", async () => {
+  const anime = animeList.find((a) => a.id === currentDetailId);
+  if (!anime) return;
+  anime.pinned = !anime.pinned;
+  await dbPut(anime);
+  document.getElementById("detailPinBtn").classList.toggle("btn-active", anime.pinned);
+  showToast(anime.pinned ? t("toast_pinned") : t("toast_unpinned"));
+  render(); // التثبيت بيغيّر ترتيب العرض فعليًا فمحتاجين إعادة بناء كاملة هنا
+});
+
+/* ============ شريط تذكير النسخة الاحتياطية ============ */
+const backupBanner = document.getElementById("backupBanner");
+let backupBannerDismissedThisSession = false;
+
+function checkBackupReminder() {
+  if (backupBannerDismissedThisSession) return;
+  const r = appSettings.backupReminder;
+  if (!r || !r.enabled) {
+    backupBanner.classList.add("hidden");
+    return;
+  }
+  const intervalMs = (r.intervalDays || 7) * 86400000;
+  const last = r.lastExportAt;
+  const due = !last || (Date.now() - last) > intervalMs;
+  backupBanner.classList.toggle("hidden", !due);
+}
+
+document.getElementById("backupBannerExportBtn").addEventListener("click", () => {
+  document.getElementById("exportBtn").click();
+});
+document.getElementById("backupBannerDismissBtn").addEventListener("click", () => {
+  backupBannerDismissedThisSession = true;
+  backupBanner.classList.add("hidden");
+});
+
+/* ============ مودال الإعدادات ============ */
+const settingsModalOverlay = document.getElementById("settingsModalOverlay");
+const backupReminderToggle = document.getElementById("backupReminderToggle");
+const backupReminderDaysInput = document.getElementById("backupReminderDaysInput");
+const hideFinishedDefaultToggle = document.getElementById("hideFinishedDefaultToggle");
+
+document.getElementById("openSettingsBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  backupReminderToggle.checked = appSettings.backupReminder.enabled;
+  backupReminderDaysInput.value = appSettings.backupReminder.intervalDays;
+  hideFinishedDefaultToggle.checked = appSettings.hideFinishedDefault;
+  renderRecentChanges();
+  settingsModalOverlay.classList.remove("hidden");
+});
+
+function renderRecentChanges() {
+  const list = document.getElementById("recentChangesList");
+  const changes = appSettings.recentChanges || [];
+  if (changes.length === 0) {
+    list.innerHTML = `<p class="hint-text">${t("no_recent_changes")}</p>`;
+    return;
+  }
+  const typeLabels = {
+    added: t("recent_change_added"),
+    edited: t("recent_change_edited"),
+    episode: t("recent_change_episode"),
+  };
+  list.innerHTML = changes
+    .map((c) => `
+      <div class="recent-change-row">
+        <span>${typeLabels[c.type] || c.type} — ${escapeHtml(c.animeName)}</span>
+        <span class="recent-change-time">${formatRelativeDate(c.timestamp)}</span>
+      </div>
+    `)
+    .join("");
+}
+
+async function saveSettingsAndClose() {
+  appSettings.backupReminder.enabled = backupReminderToggle.checked;
+  appSettings.backupReminder.intervalDays = Math.max(1, Number(backupReminderDaysInput.value) || 7);
+  appSettings.hideFinishedDefault = hideFinishedDefaultToggle.checked;
+  await dbSettingsPut("backupReminder", appSettings.backupReminder);
+  await dbSettingsPut("hideFinishedDefault", appSettings.hideFinishedDefault);
+  checkBackupReminder();
+  settingsModalOverlay.classList.add("hidden");
+}
+document.getElementById("closeSettingsBtn").addEventListener("click", saveSettingsAndClose);
+
+/* ============ زرار الفرز ============ */
+const sortMenu = document.getElementById("sortMenu");
+document.getElementById("sortBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  sortMenu.classList.toggle("hidden");
+});
+document.querySelectorAll(".sort-option").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    currentSort = btn.dataset.sort;
+    document.querySelectorAll(".sort-option").forEach((b) => b.classList.toggle("active", b === btn));
+    sortMenu.classList.add("hidden");
+    render();
+  });
+});
+document.addEventListener("click", (e) => {
+  if (!sortMenu.contains(e.target) && e.target.id !== "sortBtn") {
+    sortMenu.classList.add("hidden");
+  }
+});
+
+/* ============ أزرار الفلاتر السريعة (المثبت / إخفاء المنتهي / أكمل المشاهدة) ============ */
+const pinnedFilterBtn = document.getElementById("pinnedFilterBtn");
+const hideFinishedBtn = document.getElementById("hideFinishedBtn");
+const continueWatchingBtn = document.getElementById("continueWatchingBtn");
+
+pinnedFilterBtn.addEventListener("click", () => {
+  pinnedOnlyFilter = !pinnedOnlyFilter;
+  pinnedFilterBtn.classList.toggle("active", pinnedOnlyFilter);
+  render();
+});
+hideFinishedBtn.addEventListener("click", () => {
+  hideFinishedFilter = !hideFinishedFilter;
+  hideFinishedBtn.classList.toggle("active", hideFinishedFilter);
+  render();
+});
+continueWatchingBtn.addEventListener("click", () => {
+  continueWatchingFilter = !continueWatchingFilter;
+  continueWatchingBtn.classList.toggle("active", continueWatchingFilter);
+  render();
 });
 
 /* ============ بدء التشغيل ============ */
@@ -856,4 +1811,7 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
   await openDB();
   await loadAppSettingsFromDB();
   await reloadFromDB();
+  renderFilterSegments();
+  hideFinishedBtn.classList.toggle("active", hideFinishedFilter);
+  checkBackupReminder();
 })();
