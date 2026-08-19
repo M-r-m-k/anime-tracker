@@ -1644,8 +1644,8 @@ document.getElementById("cancelExportBtn").addEventListener("click", () => {
 
 // حفظ حقيقي على تخزين الجهاز عن طريق إضافة Capacitor الرسمية (Filesystem)
 // بدل الاعتماد على حيلة رابط تحميل المتصفح اللي مش شغالة جوه الـ WebView.
-// بيرجع true لو الحفظ الحقيقي نجح، أو false لو محتاجين نرجع لطريقة المتصفح
-// الاحتياطية (مفيدة برضه وقت تجربة الكود في متصفح عادي على الكمبيوتر).
+// بنحفظ في فولدر Download العام (المشترك) عشان يبقى ظاهر لمدير الملفات
+// ولأي تطبيق تاني، مش في مكان خاص بالتطبيق نفسه ومخفي عن الباقي.
 async function saveFileToDevice(filename, textContent) {
   try {
     const plugins = window.Capacitor && window.Capacitor.Plugins;
@@ -1653,13 +1653,13 @@ async function saveFileToDevice(filename, textContent) {
 
     const { Filesystem, Directory, Encoding } = plugins;
     await Filesystem.writeFile({
-      path: filename,
+      path: `Download/${filename}`,
       data: textContent,
-      directory: Directory.Documents,
+      directory: Directory.ExternalStorage,
       encoding: Encoding.UTF8,
       recursive: true,
     });
-    return { ok: true, location: "Documents" };
+    return { ok: true, location: "Download" };
   } catch (err) {
     return { ok: false, error: err };
   }
@@ -1734,7 +1734,7 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   checkBackupReminder();
 
   if (nativeResult.ok) {
-    showToast(`تم الحفظ في مجلد Documents/${filename} ✅`);
+    showToast(`تم الحفظ في Download/${filename} ✅`);
   } else {
     showToast(t("toast_export_done"));
   }

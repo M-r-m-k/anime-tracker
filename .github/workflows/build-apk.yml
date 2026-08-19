@@ -34,10 +34,22 @@ jobs:
             npx cap add android
           fi
 
-      - name: Generate app icon from resources/icon.png
+      - name: Add storage permission to manifest
         run: |
-          if [ -f "resources/icon.png" ]; then
-            npx @capacitor/assets generate --android
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
+            sed -i '/<manifest /a\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />' "$MANIFEST"
+          fi
+          if ! grep -q "requestLegacyExternalStorage" "$MANIFEST"; then
+            sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/' "$MANIFEST"
+          fi
+
+      - name: Generate app icon from custom image
+        run: |
+          if [ -f "assets/icon.png" ]; then
+            npx @capacitor/assets generate --android --iconBackgroundColor '#0e0c14' --iconBackgroundColorDark '#0e0c14'
+          else
+            echo "مفيش صورة أيقونة مخصصة (assets/icon.png)، هنستخدم الافتراضية"
           fi
 
       - name: Sync Capacitor
