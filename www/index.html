@@ -546,10 +546,32 @@
         <button class="icon-btn" id="vaultDeleteNoteBtn" title="حذف">🗑️</button>
       </div>
       <div class="vault-body">
+        <div class="vault-color-row" id="vaultColorRow">
+          <button class="vault-color-dot" data-color="#9691ac" style="background:#9691ac" title="افتراضي"></button>
+          <button class="vault-color-dot" data-color="#a78bfa" style="background:#a78bfa" title="بنفسجي"></button>
+          <button class="vault-color-dot" data-color="#60a5fa" style="background:#60a5fa" title="أزرق"></button>
+          <button class="vault-color-dot" data-color="#34d399" style="background:#34d399" title="أخضر"></button>
+          <button class="vault-color-dot" data-color="#fb923c" style="background:#fb923c" title="برتقالي"></button>
+          <button class="vault-color-dot" data-color="#f472b6" style="background:#f472b6" title="وردي"></button>
+        </div>
         <input type="text" id="vaultNoteTitle" class="vault-title-input" placeholder="عنوان الملاحظة" />
+        <label class="switch-row vault-checklist-toggle">
+          <span>وضع قائمة مهام (Checklist)</span>
+          <input type="checkbox" id="vaultChecklistToggle" />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
         <textarea id="vaultNoteContent" class="vault-content-input" placeholder="اكتب ملاحظتك هنا..."></textarea>
+        <div id="vaultChecklistView" class="vault-checklist-view hidden"></div>
+        <div class="vault-meta-info">
+          <span id="vaultWordCount">0 كلمة</span>
+        </div>
+        <div class="vault-dates-info">
+          <div><span>أُنشئت:</span> <span id="vaultCreatedAt">-</span></div>
+          <div><span>آخر تعديل:</span> <span id="vaultUpdatedAt">-</span></div>
+        </div>
       </div>
     </div>
+
 
   </div>
 

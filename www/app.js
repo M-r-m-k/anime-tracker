@@ -1642,31 +1642,55 @@ document.getElementById("cancelExportBtn").addEventListener("click", () => {
   exportModalOverlay.classList.add("hidden");
 });
 
-// حفظ حقيقي على تخزين الجهاز عن طريق إضافة Capacitor الرسمية (Filesystem)
-// بدل الاعتماد على حيلة رابط تحميل المتصفح اللي مش شغالة جوه الـ WebView.
-// بنحفظ في فولدر Download العام (المشترك) عشان يبقى ظاهر لمدير الملفات
-// ولأي تطبيق تاني، مش في مكان خاص بالتطبيق نفسه ومخفي عن الباقي.
+// حفظ عن طريق شاشة المشاركة الأصلية لأندرويد (Share Sheet)، بدل الكتابة
+// المباشرة على مسار معيّن — كده انت اللي تختار فين تحفظ (مدير الملفات،
+// درايف، أي حاجة)، ومفيش أي مشاكل صلاحيات محتملة خالص.
+// النسخة دي بتوريك تشخيص واضح (alert) لو فشل أي جزء، بدل ما تفشل بصمت
 async function saveFileToDevice(filename, textContent) {
-  try {
-    const plugins = window.Capacitor && window.Capacitor.Plugins;
-    if (!plugins || !plugins.Filesystem || !plugins.Share) return { ok: false };
+  const plugins = window.Capacitor && window.Capacitor.Plugins;
 
+  if (!window.Capacitor) {
+    window.alert("تشخيص: window.Capacitor مش موجود خالص — التطبيق مش شغال جوه بيئة Capacitor");
+    return { ok: false };
+  }
+  if (!plugins || !plugins.Filesystem) {
+    window.alert("تشخيص: إضافة Filesystem مش متسجلة. الحلول: 1) تأكد إن @capacitor/filesystem موجودة في package.json 2) تأكد إن npx cap sync android اتنفذت في البناء");
+    return { ok: false };
+  }
+  if (!plugins.Share) {
+    window.alert("تشخيص: إضافة Share مش متسجلة. تأكد إن @capacitor/share موجودة في package.json");
+    return { ok: false };
+  }
+
+  try {
     const { Filesystem, Directory, Encoding, Share } = plugins;
-    const writeResult = await Filesystem.writeFile({
+    await Filesystem.writeFile({
       path: filename,
       data: textContent,
       directory: Directory.Cache,
       encoding: Encoding.UTF8,
     });
 
+    // بنطلب الـ URI بشكل صريح بعد الكتابة (بدل الاعتماد على قيمة الإرجاع
+    // من writeFile مباشرة) — ده النمط الموصى بيه لضمان إن الرابط اللي
+    // هنشاركه فعلًا صالح ومتوافق مع نظام مشاركة الملفات بتاع أندرويد
+    const uriResult = await Filesystem.getUri({
+      path: filename,
+      directory: Directory.Cache,
+    });
+
+    window.alert("تشخيص: هنفتح شاشة المشاركة دلوقتي...");
+
     await Share.share({
       title: filename,
-      url: writeResult.uri,
+      url: uriResult.uri,
       dialogTitle: "احفظ النسخة الاحتياطية",
     });
 
     return { ok: true, location: "shared" };
   } catch (err) {
+    const msg = (err && (err.message || err.errorMessage)) || JSON.stringify(err);
+    window.alert("تشخيص فشل الحفظ:\n" + msg);
     return { ok: false, error: err };
   }
 }
@@ -1709,7 +1733,7 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   setProgress("export", 85, "جاري حفظ الملف...");
 
   const dateStr = new Date().toISOString().slice(0, 10);
-  const filename = `anime-backup-${dateStr}.animebackup`;
+  const filename = `anime-backup-${dateStr}.json`;
   const finalText = JSON.stringify(fileContent);
 
   const nativeResult = await saveFileToDevice(filename, finalText);
@@ -2362,7 +2386,15 @@ document.getElementById("vaultUnlockBtn").addEventListener("click", async () => 
     for (const n of allEncrypted) {
       try {
         const decrypted = JSON.parse(await vaultDecryptText(key, n));
-        vaultNotes.push({ id: n.id, title: decrypted.title, content: decrypted.content, updatedAt: n.updatedAt, createdAt: n.createdAt });
+        vaultNotes.push({
+          id: n.id,
+          title: decrypted.title,
+          content: decrypted.content,
+          color: decrypted.color || "#9691ac",
+          checklistMode: !!decrypted.checklistMode,
+          updatedAt: n.updatedAt,
+          createdAt: n.createdAt,
+        });
       } catch (e) { /* تجاهل ملاحظة تالفة بدل ما توقف الباقي */ }
     }
 
@@ -2414,7 +2446,7 @@ function renderVaultNotesList() {
   empty.classList.toggle("hidden", filtered.length !== 0);
   list.innerHTML = filtered
     .map((n) => `
-      <div class="vault-note-card" data-id="${n.id}">
+      <div class="vault-note-card" data-id="${n.id}" style="border-right-color:${n.color || '#9691ac'}">
         <div class="vault-note-title">${escapeHtml(n.title || "(بدون عنوان)")}</div>
         <div class="vault-note-snippet">${escapeHtml((n.content || "").slice(0, 60))}</div>
         <div class="vault-note-time">${formatRelativeDate(n.updatedAt)}</div>
@@ -2435,15 +2467,106 @@ document.getElementById("vaultNewNoteBtn").addEventListener("click", () => openV
 
 /* ---- محرر الملاحظة ---- */
 let vaultSaveTimer = null;
+let vaultCurrentColor = "#9691ac";
+let vaultChecklistMode = false;
+
+function formatFullDate(ts) {
+  if (!ts) return "-";
+  const d = new Date(ts);
+  const days = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+  const months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} – ${hh}:${mm}`;
+}
+
+function updateWordCount() {
+  const content = document.getElementById("vaultNoteContent").value;
+  const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+  document.getElementById("vaultWordCount").textContent = `${words} كلمة · ${content.length} حرف`;
+}
+
+function setVaultColor(color) {
+  vaultCurrentColor = color;
+  document.querySelectorAll(".vault-color-dot").forEach((d) => d.classList.toggle("active", d.dataset.color === color));
+  document.documentElement.style.setProperty("--vault-accent", color);
+}
+
+document.querySelectorAll(".vault-color-dot").forEach((dot) => {
+  dot.addEventListener("click", () => {
+    setVaultColor(dot.dataset.color);
+    clearTimeout(vaultSaveTimer);
+    vaultSaveTimer = setTimeout(vaultAutoSave, 400);
+  });
+});
+
+// وضع Checklist: كل سطر بيتحول لمربع اختيار قابل للدوس، من غير أي محرر
+// نص غني معقّد — مجرد نص عادي بعلامة [x]/[ ] في أوله، بسيط وسريع وآمن
+function renderChecklistView() {
+  const content = document.getElementById("vaultNoteContent").value;
+  const view = document.getElementById("vaultChecklistView");
+  const lines = content.split("\n").filter((l) => l.trim());
+
+  view.innerHTML = lines
+    .map((line, idx) => {
+      const checked = /^\[x\]/i.test(line.trim());
+      const text = line.replace(/^\[[ x]\]\s*/i, "");
+      return `
+        <div class="checklist-item${checked ? " done" : ""}" data-idx="${idx}">
+          <span class="checklist-box">${checked ? "☑" : "☐"}</span>
+          <span class="checklist-text">${escapeHtml(text)}</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  view.querySelectorAll(".checklist-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const idx = Number(item.dataset.idx);
+      const currentLines = document.getElementById("vaultNoteContent").value.split("\n");
+      const target = currentLines[idx];
+      const isChecked = /^\[x\]/i.test(target.trim());
+      const text = target.replace(/^\[[ x]\]\s*/i, "");
+      currentLines[idx] = isChecked ? `[ ] ${text}` : `[x] ${text}`;
+      document.getElementById("vaultNoteContent").value = currentLines.join("\n");
+      renderChecklistView();
+      clearTimeout(vaultSaveTimer);
+      vaultSaveTimer = setTimeout(vaultAutoSave, 400);
+    });
+  });
+}
+
+function setChecklistMode(on) {
+  vaultChecklistMode = on;
+  document.getElementById("vaultChecklistToggle").checked = on;
+  document.getElementById("vaultNoteContent").classList.toggle("hidden", on);
+  document.getElementById("vaultChecklistView").classList.toggle("hidden", !on);
+  if (on) renderChecklistView();
+}
+
+document.getElementById("vaultChecklistToggle").addEventListener("change", (e) => {
+  setChecklistMode(e.target.checked);
+  clearTimeout(vaultSaveTimer);
+  vaultSaveTimer = setTimeout(vaultAutoSave, 400);
+});
 
 function openVaultEditor(id) {
   resetVaultAutoLockTimer();
   vaultCurrentNoteId = id;
   const note = id ? vaultNotes.find((n) => n.id === id) : null;
+
   document.getElementById("vaultNoteTitle").value = note ? note.title : "";
   document.getElementById("vaultNoteContent").value = note ? note.content : "";
   document.getElementById("vaultDeleteNoteBtn").classList.toggle("hidden", !note);
   document.getElementById("vaultSaveIndicator").textContent = "";
+
+  setVaultColor((note && note.color) || "#9691ac");
+  setChecklistMode(!!(note && note.checklistMode));
+  updateWordCount();
+
+  document.getElementById("vaultCreatedAt").textContent = note ? formatFullDate(note.createdAt) : "لسه معملتش حفظ";
+  document.getElementById("vaultUpdatedAt").textContent = note ? formatFullDate(note.updatedAt) : "-";
+
   showVaultScreen("vaultEditorScreen");
 }
 
@@ -2465,7 +2588,12 @@ async function vaultAutoSave() {
     vaultCurrentNoteId = "n_" + now + "_" + Math.random().toString(36).slice(2, 8);
   }
 
-  const plainPayload = JSON.stringify({ title, content });
+  const plainPayload = JSON.stringify({
+    title,
+    content,
+    color: vaultCurrentColor,
+    checklistMode: vaultChecklistMode,
+  });
   const encrypted = await vaultEncryptText(vaultKey, plainPayload);
   const existing = vaultNotes.find((n) => n.id === vaultCurrentNoteId);
   const createdAt = existing ? existing.createdAt : now;
@@ -2473,17 +2601,20 @@ async function vaultAutoSave() {
   await dbVaultNotePut({ id: vaultCurrentNoteId, iv: encrypted.iv, data: encrypted.data, createdAt, updatedAt: now });
 
   const idx = vaultNotes.findIndex((n) => n.id === vaultCurrentNoteId);
-  const updatedNote = { id: vaultCurrentNoteId, title, content, createdAt, updatedAt: now };
+  const updatedNote = { id: vaultCurrentNoteId, title, content, color: vaultCurrentColor, checklistMode: vaultChecklistMode, createdAt, updatedAt: now };
   if (idx >= 0) vaultNotes[idx] = updatedNote;
   else vaultNotes.push(updatedNote);
 
   indicator.textContent = "✓ تم الحفظ";
   document.getElementById("vaultDeleteNoteBtn").classList.remove("hidden");
+  document.getElementById("vaultCreatedAt").textContent = formatFullDate(createdAt);
+  document.getElementById("vaultUpdatedAt").textContent = formatFullDate(now);
 }
 
 ["vaultNoteTitle", "vaultNoteContent"].forEach((id) => {
   document.getElementById(id).addEventListener("input", () => {
     resetVaultAutoLockTimer();
+    updateWordCount();
     clearTimeout(vaultSaveTimer);
     document.getElementById("vaultSaveIndicator").textContent = "...";
     vaultSaveTimer = setTimeout(vaultAutoSave, 500);
