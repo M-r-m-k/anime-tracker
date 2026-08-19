@@ -45,6 +45,14 @@
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
         <span data-text-key="menu_edit_statuses">تعديل الحالات</span>
       </button>
+      <button id="openListsBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+        <span data-text-key="menu_lists">القوائم</span>
+      </button>
+      <button id="openVaultBtn" class="menu-item">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3H9V6a3 3 0 0 1 3-3zm0 10a2 2 0 0 1 1 3.73V19h-2v-2.27A2 2 0 0 1 12 13z"/></svg>
+        <span data-text-key="menu_vault">🔐 الأسرار</span>
+      </button>
       <button id="openSettingsBtn" class="menu-item">
         <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.5.5 0 0 0 .12-.61l-1.92-3.32a.5.5 0 0 0-.58-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.5.5 0 0 0-.58.22L2.7 8.87a.5.5 0 0 0 .12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.5.5 0 0 0-.12.61l1.92 3.32c.12.22.37.29.58.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .58-.22l1.92-3.32a.5.5 0 0 0-.12-.61l-2.01-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
         <span data-text-key="menu_settings">الإعدادات</span>
@@ -70,6 +78,9 @@
   </div>
 
   <!-- شريط الفلترة -->
+  <!-- شارة القائمة الحالية -->
+  <button id="currentListBadge" class="current-list-badge">📚 أنمي</button>
+
   <div class="filter-bar">
     <input type="search" id="searchInput" data-text-placeholder-key="search_placeholder" placeholder="ابحث عن أنمي..." />
     <button id="sortBtn" class="icon-btn" aria-label="ترتيب">
@@ -289,6 +300,34 @@
       </label>
 
       <div id="exportPasswordWrap" class="hidden">
+        <label class="field-label" data-text-key="field_label_encrypt_method">اختار طريقة التشفير</label>
+        <div class="encrypt-methods">
+          <div class="encrypt-method-item">
+            <button type="button" class="encrypt-method-btn active" data-method="pbkdf2">🔴 قوي</button>
+            <button type="button" class="method-info-btn" data-method="pbkdf2">📄</button>
+          </div>
+          <div class="encrypt-method-item">
+            <button type="button" class="encrypt-method-btn" data-method="xor">🔴 متوسط</button>
+            <button type="button" class="method-info-btn" data-method="xor">📄</button>
+          </div>
+          <div class="encrypt-method-item">
+            <button type="button" class="encrypt-method-btn" data-method="caesar">🔴 بسيط</button>
+            <button type="button" class="method-info-btn" data-method="caesar">📄</button>
+          </div>
+        </div>
+        <div class="method-info-panel hidden" id="methodInfoPbkdf2">
+          <strong data-text-key="method_pbkdf2_name">تشفير AES-256 (قوي وسريع)</strong>
+          <p data-text-key="method_pbkdf2_desc">بيشتق مفتاح تشفير حقيقي من كلمة السر، وبيشفّر الملف بالكامل بمعيار AES المستخدم عالميًا. أقوى خيار، وسريع كفاية عشان يشتغل من غير أي تهنيج.</p>
+        </div>
+        <div class="method-info-panel hidden" id="methodInfoXor">
+          <strong data-text-key="method_xor_name">تشفير XOR (متوسط وسريع جدًا)</strong>
+          <p data-text-key="method_xor_desc">بيحوّل كلمة السر لمفتاح ثابت وبيدمجه مع بيانات الملف بايت بايت. أسرع كتير من التشفير القوي، وكافي لمنع أي حد يفتح الملف بسهولة بمحرر نصوص عادي.</p>
+        </div>
+        <div class="method-info-panel hidden" id="methodInfoCaesar">
+          <strong data-text-key="method_caesar_name">تشفير الإزاحة (الأبسط)</strong>
+          <p data-text-key="method_caesar_desc">بيزيح كل حرف في الملف بمقدار مبني على كلمة السر. أبسط طريقة ممكنة وأسرعها على الإطلاق، مناسبة بس لو عايز تمويه خفيف مش حماية قوية فعليًا.</p>
+        </div>
+
         <label class="field-label" data-text-key="field_label_password">كلمة السر</label>
         <input type="password" id="exportPassword" class="text-field" data-text-placeholder-key="field_password_placeholder" placeholder="اكتب كلمة سر قوية" />
         <label class="field-label" data-text-key="field_label_password_confirm">تأكيد كلمة السر</label>
@@ -413,6 +452,105 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- مودال القوائم -->
+  <div class="modal-overlay hidden" id="listsModalOverlay">
+    <div class="modal">
+      <h2>القوائم</h2>
+      <p class="modal-desc">كل قائمة عندها بياناتها الخاصة، وممكن يكون ليها ألوانها وحالاتها المستقلة كمان.</p>
+
+      <button id="newListBtn" class="btn btn-primary full-btn">+ قائمة جديدة</button>
+
+      <div id="listsListEl" class="lists-list"></div>
+
+      <div class="modal-actions">
+        <div class="modal-actions-right full-width">
+          <button id="closeListsBtn" class="btn btn-ghost full-btn" data-text-key="btn_close">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- شاشة الأسرار (خزنة منفصلة تمامًا، مش مودال، مش بتلمس الشاشة الرئيسية خالص) -->
+  <div class="vault-overlay hidden" id="vaultOverlay">
+
+    <!-- شاشة الإعداد الأول -->
+    <div class="vault-screen" id="vaultSetupScreen">
+      <div class="vault-header">
+        <button class="icon-btn" id="vaultSetupCloseBtn">✕</button>
+        <h2>🔐 حماية الأسرار</h2>
+      </div>
+      <div class="vault-body">
+        <p class="modal-desc">أنشئ كلمة مرور رئيسية لحماية ملاحظاتك السرية.</p>
+        <label class="field-label">كلمة المرور</label>
+        <input type="password" id="vaultSetupPassword" class="text-field" placeholder="كلمة مرور قوية" />
+        <label class="field-label">تأكيد كلمة المرور</label>
+        <input type="password" id="vaultSetupPasswordConfirm" class="text-field" placeholder="اكتبها تاني" />
+        <p class="hint-text error hidden" id="vaultSetupError"></p>
+        <p class="hint-text">⚠️ مفيش "استرجاع" لو نسيت كلمة المرور — الخيار الوحيد هيبقى تصفير الخزنة بالكامل.</p>
+        <button id="vaultSetupBtn" class="btn btn-primary full-btn">إنشاء الخزنة</button>
+      </div>
+    </div>
+
+    <!-- شاشة الفتح -->
+    <div class="vault-screen hidden" id="vaultUnlockScreen">
+      <div class="vault-header">
+        <button class="icon-btn" id="vaultUnlockCloseBtn">✕</button>
+        <h2>🔐 فتح الخزنة</h2>
+      </div>
+      <div class="vault-body">
+        <label class="field-label">كلمة المرور</label>
+        <input type="password" id="vaultUnlockPassword" class="text-field" placeholder="كلمة المرور" />
+        <p class="hint-text error hidden" id="vaultUnlockError"></p>
+        <button id="vaultUnlockBtn" class="btn btn-primary full-btn">فتح</button>
+        <button id="vaultForgotBtn" class="btn btn-ghost full-btn">نسيت كلمة المرور؟</button>
+      </div>
+    </div>
+
+    <!-- شاشة إعادة التصفير -->
+    <div class="vault-screen hidden" id="vaultResetScreen">
+      <div class="vault-header">
+        <button class="icon-btn" id="vaultResetCloseBtn">✕</button>
+        <h2>⚠️ تصفير الخزنة</h2>
+      </div>
+      <div class="vault-body">
+        <p class="modal-desc">ده هيمسح كل الملاحظات السرية نهائيًا وميرجعش، وبعدين تقدر تعمل خزنة جديدة بكلمة مرور جديدة.</p>
+        <button id="vaultConfirmResetBtn" class="btn btn-danger full-btn">تصفير الخزنة نهائيًا</button>
+        <button id="vaultCancelResetBtn" class="btn btn-ghost full-btn">إلغاء</button>
+      </div>
+    </div>
+
+    <!-- شاشة قائمة الملاحظات -->
+    <div class="vault-screen hidden" id="vaultNotesScreen">
+      <div class="vault-header">
+        <button class="icon-btn" id="vaultLockBtn" title="قفل">🔒</button>
+        <h2>🔐 الأسرار</h2>
+        <button class="icon-btn" id="vaultNewNoteBtn" title="ملاحظة جديدة">+</button>
+      </div>
+      <div class="vault-body">
+        <input type="search" id="vaultSearchInput" class="text-field" placeholder="ابحث في الملاحظات..." />
+        <div id="vaultNotesList" class="vault-notes-list"></div>
+        <div id="vaultEmptyState" class="empty-state hidden">
+          <p>لسه مفيش ملاحظات</p>
+          <span>دوس + عشان تضيف أول ملاحظة</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- شاشة تحرير ملاحظة -->
+    <div class="vault-screen hidden" id="vaultEditorScreen">
+      <div class="vault-header">
+        <button class="icon-btn" id="vaultEditorBackBtn">→</button>
+        <span id="vaultSaveIndicator" class="vault-save-indicator"></span>
+        <button class="icon-btn" id="vaultDeleteNoteBtn" title="حذف">🗑️</button>
+      </div>
+      <div class="vault-body">
+        <input type="text" id="vaultNoteTitle" class="vault-title-input" placeholder="عنوان الملاحظة" />
+        <textarea id="vaultNoteContent" class="vault-content-input" placeholder="اكتب ملاحظتك هنا..."></textarea>
+      </div>
+    </div>
+
   </div>
 
   <!-- توست إشعار -->

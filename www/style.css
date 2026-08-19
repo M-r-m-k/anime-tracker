@@ -719,3 +719,153 @@ body {
   font-weight: 800;
   font-family: 'Tajawal', sans-serif;
 }
+
+/* ===== شارة القائمة الحالية ===== */
+.current-list-badge {
+  margin: 10px 16px 0;
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+/* ===== شاشة القوائم ===== */
+.lists-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.list-row.active { border-color: var(--accent-2); }
+.list-row-info { display: flex; flex-direction: column; gap: 2px; }
+.list-row-name { font-weight: 700; font-size: 14px; }
+.list-row-count { font-size: 11.5px; color: var(--text-faint); }
+.list-row-actions { display: flex; align-items: center; gap: 8px; }
+.list-current-tag {
+  font-size: 11px;
+  color: var(--success);
+  background: rgba(52,211,153,0.12);
+  padding: 4px 10px;
+  border-radius: 12px;
+}
+.list-switch-btn { padding: 7px 12px; font-size: 12px; }
+.list-delete-btn {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--danger);
+}
+
+/* ===== أزرار طرق التشفير الثلاثة ===== */
+.encrypt-methods { display: flex; gap: 8px; margin-top: 8px; }
+.encrypt-method-item { flex: 1; display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.encrypt-method-btn {
+  width: 100%;
+  padding: 10px 6px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid rgba(255,84,112,0.35);
+  background: rgba(255,84,112,0.08);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: 'Tajawal', sans-serif;
+}
+.encrypt-method-btn.active {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+}
+.method-info-btn {
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  opacity: 0.6;
+  padding: 2px;
+}
+.method-info-panel {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.method-info-panel strong { display: block; margin-bottom: 4px; font-size: 12.5px; }
+.method-info-panel p { margin: 0; color: var(--text-secondary); }
+
+/* ===== شاشة الأسرار (Vault) - كاملة ومنفصلة عن باقي التطبيق ===== */
+.vault-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+}
+.vault-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vault-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(14px + var(--safe-top)) 16px 14px;
+  border-bottom: 1px solid var(--card-border);
+  background: var(--bg-elevated);
+}
+.vault-header h2 { font-family: 'Cairo', sans-serif; font-size: 17px; margin: 0; }
+.vault-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px calc(16px) calc(24px + var(--safe-bottom));
+}
+.vault-save-indicator { font-size: 12px; color: var(--text-faint); }
+
+.vault-notes-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.vault-note-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+.vault-note-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.vault-note-snippet { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+.vault-note-time { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+
+.vault-title-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--card-border);
+  padding: 10px 2px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  margin-bottom: 12px;
+}
+.vault-content-input {
+  width: 100%;
+  min-height: 50vh;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-family: 'Tajawal', sans-serif;
+  font-size: 14.5px;
+  line-height: 1.8;
+  resize: vertical;
+}
+.vault-title-input:focus, .vault-content-input:focus { outline: none; }

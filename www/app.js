@@ -1,8 +1,11 @@
 /* ============ إعداد قاعدة البيانات المحلية (IndexedDB) ============ */
 const DB_NAME = "anime_tracker_db";
-const DB_VERSION = 2;
+const DB_VERSION = 4;
 const STORE = "anime_items";
 const SETTINGS_STORE = "app_settings";
+const LISTS_STORE = "lists";
+const DEFAULT_LIST_ID = "anime_default";
+const VAULT_NOTES_STORE = "vault_notes";
 let db;
 
 function openDB() {
@@ -17,9 +20,92 @@ function openDB() {
       if (!_db.objectStoreNames.contains(SETTINGS_STORE)) {
         _db.createObjectStore(SETTINGS_STORE, { keyPath: "key" });
       }
+      if (!_db.objectStoreNames.contains(LISTS_STORE)) {
+        _db.createObjectStore(LISTS_STORE, { keyPath: "id" });
+      }
+      if (!_db.objectStoreNames.contains(VAULT_NOTES_STORE)) {
+        _db.createObjectStore(VAULT_NOTES_STORE, { keyPath: "id" });
+      }
     };
     req.onsuccess = (e) => { db = e.target.result; resolve(db); };
     req.onerror = (e) => reject(e);
+  });
+}
+
+/* ---- الأسرار (Vault) ---- */
+function dbVaultNotesGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(VAULT_NOTES_STORE, "readonly");
+    const req = tx.objectStore(VAULT_NOTES_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+function dbVaultNotePut(note) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(VAULT_NOTES_STORE, "readwrite");
+    tx.objectStore(VAULT_NOTES_STORE).put(note);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+function dbVaultNoteDelete(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(VAULT_NOTES_STORE, "readwrite");
+    tx.objectStore(VAULT_NOTES_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+function dbVaultNotesClearAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(VAULT_NOTES_STORE, "readwrite");
+    tx.objectStore(VAULT_NOTES_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+/* ---- القوائم (Lists) ---- */
+function dbListsGetAll() {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(LISTS_STORE, "readonly");
+    const req = tx.objectStore(LISTS_STORE).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = (e) => reject(e);
+  });
+}
+function dbListPut(list) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(LISTS_STORE, "readwrite");
+    tx.objectStore(LISTS_STORE).put(list);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+function dbListDelete(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(LISTS_STORE, "readwrite");
+    tx.objectStore(LISTS_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+// حذف كل عناصر قائمة معيّنة (لما نحذف القائمة نفسها)، على دفعات صغيرة
+function dbDeleteItemsByListId(listId, allItems) {
+  const toDelete = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === listId);
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    function nextBatch() {
+      if (i >= toDelete.length) { resolve(); return; }
+      const batch = toDelete.slice(i, i + 25);
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      batch.forEach((it) => store.delete(it.id));
+      tx.oncomplete = () => { i += 25; setTimeout(nextBatch, 20); };
+      tx.onerror = (e) => reject(e);
+    }
+    nextBatch();
   });
 }
 
@@ -246,7 +332,16 @@ const DEFAULT_TEXTS = {
 const DEFAULT_APP_NAME = "Animelist";
 
 const EXTRA_DEFAULT_TEXTS = {
+  menu_lists: "القوائم",
+  menu_vault: "🔐 الأسرار",
   menu_settings: "الإعدادات",
+  field_label_encrypt_method: "اختار طريقة التشفير",
+  method_pbkdf2_name: "تشفير AES-256 (قوي وسريع)",
+  method_pbkdf2_desc: "بيشتق مفتاح تشفير حقيقي من كلمة السر، وبيشفّر الملف بالكامل بمعيار AES المستخدم عالميًا. أقوى خيار، وسريع كفاية عشان يشتغل من غير أي تهنيج.",
+  method_xor_name: "تشفير XOR (متوسط وسريع جدًا)",
+  method_xor_desc: "بيحوّل كلمة السر لمفتاح ثابت وبيدمجه مع بيانات الملف بايت بايت. أسرع كتير من التشفير القوي، وكافي لمنع أي حد يفتح الملف بسهولة بمحرر نصوص عادي.",
+  method_caesar_name: "تشفير الإزاحة (الأبسط)",
+  method_caesar_desc: "بيزيح كل حرف في الملف بمقدار مبني على كلمة السر. أبسط طريقة ممكنة وأسرعها على الإطلاق، مناسبة بس لو عايز تمويه خفيف مش حماية قوية فعليًا.",
   filter_pinned_only: "المثبت فقط",
   filter_hide_finished: "إخفاء المنتهي",
   filter_continue_watching: "أكمل المشاهدة",
@@ -308,6 +403,21 @@ let currentSort = "manual";
 let pinnedOnlyFilter = false;
 let hideFinishedFilter = false;
 let continueWatchingFilter = false;
+
+// القائمة الحالية (زي "أنمي" أو "أفلام")
+let currentListId = DEFAULT_LIST_ID;
+let currentListName = "أنمي";
+
+// حفظ إعدادات (ألوان/نصوص/حالات) القائمة الحالية بس، من غير ما تأثر على أي قائمة تانية
+async function saveCurrentListSettings() {
+  await dbListPut({
+    id: currentListId,
+    name: currentListName,
+    colors: appSettings.colors,
+    texts: appSettings.texts,
+    statuses: appSettings.statuses,
+  });
+}
 
 // تسجيل حركة في سجل آخر التغييرات (محدود بعدد صغير عشان مايكبرش لانهائي)
 async function logRecentChange(type, animeName) {
@@ -422,7 +532,10 @@ function applyAppIdentity() {
   }
 }
 
-/* ============ تحميل الإعدادات من القاعدة مع دمج القيم الافتراضية ============ */
+/* ============ تحميل الإعدادات من القاعدة مع دمج القيم الافتراضية ============
+   الإعدادات دي مقسومة نوعين:
+   1. إعدادات عامة للتطبيق كله (اسم التطبيق، صورته) — بتفضل زي ما هي مهما بدّلت قائمة
+   2. إعدادات خاصة بكل قائمة لوحدها (الألوان، النصوص، الحالات) — بتتغيّر مع كل قائمة */
 async function loadAppSettingsFromDB() {
   const rows = await dbSettingsGetAll();
   const map = {};
@@ -432,19 +545,54 @@ async function loadAppSettingsFromDB() {
     appName: map.appName ?? DEFAULT_APP_NAME,
     logo: map.logo ?? null,
     gallery: map.gallery ?? [],
-    colors: { ...DEFAULT_COLORS, ...(map.colors || {}) },
-    texts: { ...DEFAULT_TEXTS, ...(map.texts || {}) },
-    statuses: (map.statuses && map.statuses.length ? map.statuses : DEFAULT_STATUSES).map((s) => ({ ...s })),
+    colors: { ...DEFAULT_COLORS },
+    texts: { ...DEFAULT_TEXTS },
+    statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
     backupReminder: { ...DEFAULT_SETTINGS_EXTRA.backupReminder, ...(map.backupReminder || {}) },
     hideFinishedDefault: map.hideFinishedDefault ?? false,
     recentChanges: map.recentChanges ?? [],
   };
 
   hideFinishedFilter = appSettings.hideFinishedDefault;
+  currentListId = map.currentListId ?? DEFAULT_LIST_ID;
+
+  applyAppIdentity();
+}
+
+// يتأكد إن القائمة الافتراضية موجودة (أول تشغيل للتطبيق)، وبيحمّل إعدادات
+// (ألوان/نصوص/حالات) القائمة الحالية المختارة
+async function loadCurrentListSettings() {
+  const lists = await dbListsGetAll();
+
+  if (lists.length === 0) {
+    // أول تشغيل خالص: نجهّز القائمة الافتراضية (أنمي) بالإعدادات الافتراضية العادية
+    await dbListPut({
+      id: DEFAULT_LIST_ID,
+      name: "أنمي",
+      colors: DEFAULT_COLORS,
+      texts: DEFAULT_TEXTS,
+      statuses: DEFAULT_STATUSES,
+    });
+    currentListId = DEFAULT_LIST_ID;
+  }
+
+  const allLists = lists.length === 0 ? await dbListsGetAll() : lists;
+  let activeList = allLists.find((l) => l.id === currentListId) || allLists[0];
+  currentListId = activeList.id;
+  currentListName = activeList.name;
+
+  appSettings.colors = { ...DEFAULT_COLORS, ...(activeList.colors || {}) };
+  appSettings.texts = { ...DEFAULT_TEXTS, ...(activeList.texts || {}) };
+  appSettings.statuses = (activeList.statuses && activeList.statuses.length ? activeList.statuses : DEFAULT_STATUSES).map((s) => ({ ...s }));
 
   applyColorsToUI();
-  applyAppIdentity();
   applyTexts();
+  updateListBadge();
+}
+
+function updateListBadge() {
+  const badge = document.getElementById("currentListBadge");
+  if (badge) badge.textContent = `📚 ${currentListName}`;
 }
 
 /* ============ عرض القائمة ============ */
@@ -948,6 +1096,7 @@ document.getElementById("saveAnimeBtn").addEventListener("click", async () => {
     isNewItem = true;
     savedAnime = {
       id: "a_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      listId: currentListId,
       ...commonFields,
       image: pickedImageDataUrl || null,
       notes: "",
@@ -1064,9 +1213,13 @@ function showToastWithAction(msg, actionLabel, onAction) {
   toastTimer = setTimeout(() => toast.classList.add("hidden"), 5000);
 }
 
-/* ============ إعادة التحميل من القاعدة ============ */
+/* ============ إعادة التحميل من القاعدة ============
+   بنجيب كل العناصر، وبنفلتر في الذاكرة بس عناصر القائمة الحالية —
+   ده بيخلي animeList دايمًا معبّر عن القائمة المفتوحة بس، ومعظم الكود
+   القديم (البحث/الفرز/العرض) بيفضل شغال زي ما هو من غير أي تعديل */
 async function reloadFromDB() {
-  animeList = await dbGetAll();
+  const all = await dbGetAll();
+  animeList = all.filter((a) => (a.listId || DEFAULT_LIST_ID) === currentListId);
   render();
 }
 
@@ -1198,7 +1351,7 @@ function renderColorsList() {
 
 document.getElementById("saveColorsBtn").addEventListener("click", async () => {
   appSettings.colors = { ...tempColors };
-  await dbSettingsPut("colors", appSettings.colors);
+  await saveCurrentListSettings();
   colorsModalOverlay.classList.add("hidden");
   showToast(t("toast_colors_saved"));
 });
@@ -1248,7 +1401,7 @@ function renderTextsList() {
 
 document.getElementById("saveTextsBtn").addEventListener("click", async () => {
   appSettings.texts = { ...tempTexts };
-  await dbSettingsPut("texts", appSettings.texts);
+  await saveCurrentListSettings();
   applyTexts();
   renderFilterSegments();
   textsModalOverlay.classList.add("hidden");
@@ -1290,17 +1443,17 @@ function renderStatusesList() {
     `;
     row.querySelector(".status-color-input").addEventListener("input", async (e) => {
       appSettings.statuses[idx].color = e.target.value;
-      await dbSettingsPut("statuses", appSettings.statuses);
+      await saveCurrentListSettings();
       render();
     });
     row.querySelector(".status-label-input").addEventListener("change", async (e) => {
       appSettings.statuses[idx].label = e.target.value.trim() || s.label;
-      await dbSettingsPut("statuses", appSettings.statuses);
+      await saveCurrentListSettings();
       render();
     });
     row.querySelector(".status-delete-btn").addEventListener("click", async () => {
       appSettings.statuses.splice(idx, 1);
-      await dbSettingsPut("statuses", appSettings.statuses);
+      await saveCurrentListSettings();
       renderStatusesList();
       renderFilterSegments();
       render();
@@ -1322,7 +1475,7 @@ document.getElementById("addStatusBtn").addEventListener("click", async () => {
     color: newStatusColor.value,
   };
   appSettings.statuses.push(newStatus);
-  await dbSettingsPut("statuses", appSettings.statuses);
+  await saveCurrentListSettings();
   newStatusLabel.value = "";
   renderStatusesList();
   renderFilterSegments();
@@ -1332,13 +1485,17 @@ document.getElementById("addStatusBtn").addEventListener("click", async () => {
 /* ================================================================
    نظام التشفير (AES-GCM + PBKDF2) للتصدير/الاستيراد
    ================================================================ */
+// عدد دورات مخفّض بشكل كبير (كان 210,000) — التقليل الكبير ده هو اللي بيمنع
+// أي تهنيج فعليًا وقت التشفير أو فك التشفير، مع الحفاظ على حماية معقولة
+const PBKDF2_ITERATIONS = 8000;
+
 async function deriveKey(password, saltBytes) {
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
     "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: saltBytes, iterations: 210000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: saltBytes, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     baseKey,
     { name: "AES-GCM", length: 256 },
     false,
@@ -1365,7 +1522,8 @@ function base64ToBuf(b64) {
   return bytes.buffer;
 }
 
-async function encryptJSON(jsonString, password) {
+/* ---- الطريقة 1: تشفير قوي (AES-256-GCM + PBKDF2 مخفّف) ---- */
+async function pbkdf2Encrypt(jsonString, password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(password, salt);
@@ -1373,19 +1531,74 @@ async function encryptJSON(jsonString, password) {
   const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(jsonString));
   return {
     encrypted: true,
+    method: "pbkdf2",
     salt: bufToBase64(salt),
     iv: bufToBase64(iv),
     data: bufToBase64(cipherBuf),
   };
 }
-
-async function decryptJSON(payload, password) {
+async function pbkdf2Decrypt(payload, password) {
   const salt = new Uint8Array(base64ToBuf(payload.salt));
   const iv = new Uint8Array(base64ToBuf(payload.iv));
   const key = await deriveKey(password, salt);
   const cipherBuf = base64ToBuf(payload.data);
   const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherBuf);
   return new TextDecoder().decode(plainBuf);
+}
+
+/* ---- الطريقة 2: تشفير XOR (متوسط، أسرع بكتير، بدون أي عمليات معقدة) ---- */
+async function deriveXorKeyBytes(password) {
+  const enc = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", enc.encode(password));
+  return new Uint8Array(hash);
+}
+async function xorEncrypt(jsonString, password) {
+  const keyBytes = await deriveXorKeyBytes(password);
+  const dataBytes = new TextEncoder().encode(jsonString);
+  const outBytes = new Uint8Array(dataBytes.length);
+  for (let i = 0; i < dataBytes.length; i++) outBytes[i] = dataBytes[i] ^ keyBytes[i % keyBytes.length];
+  return { encrypted: true, method: "xor", data: bufToBase64(outBytes.buffer) };
+}
+async function xorDecrypt(payload, password) {
+  const keyBytes = await deriveXorKeyBytes(password);
+  const cipherBytes = new Uint8Array(base64ToBuf(payload.data));
+  const outBytes = new Uint8Array(cipherBytes.length);
+  for (let i = 0; i < cipherBytes.length; i++) outBytes[i] = cipherBytes[i] ^ keyBytes[i % keyBytes.length];
+  return new TextDecoder().decode(outBytes);
+}
+
+/* ---- الطريقة 3: تشفير إزاحة بسيط (Caesar، أبسط وأسرع طريقة ممكنة) ---- */
+function passwordToShift(password) {
+  let sum = 0;
+  for (let i = 0; i < password.length; i++) sum += password.charCodeAt(i);
+  return (sum % 255) + 1;
+}
+async function caesarEncrypt(jsonString, password) {
+  const shift = passwordToShift(password);
+  const bytes = new TextEncoder().encode(jsonString);
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = (bytes[i] + shift) % 256;
+  return { encrypted: true, method: "caesar", data: bufToBase64(out.buffer) };
+}
+async function caesarDecrypt(payload, password) {
+  const shift = passwordToShift(password);
+  const bytes = new Uint8Array(base64ToBuf(payload.data));
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = (bytes[i] - shift + 256) % 256;
+  return new TextDecoder().decode(out);
+}
+
+/* ---- موزّع الطرق (Dispatch) ---- */
+async function encryptJSON(jsonString, password, method) {
+  if (method === "xor") return xorEncrypt(jsonString, password);
+  if (method === "caesar") return caesarEncrypt(jsonString, password);
+  return pbkdf2Encrypt(jsonString, password);
+}
+async function decryptJSON(payload, password) {
+  const method = payload.method || "pbkdf2"; // ملفات قديمة قبل إضافة الطرق التلاتة
+  if (method === "xor") return xorDecrypt(payload, password);
+  if (method === "caesar") return caesarDecrypt(payload, password);
+  return pbkdf2Decrypt(payload, password);
 }
 
 /* ============ مودال التصدير ============ */
@@ -1409,9 +1622,48 @@ encryptToggle.addEventListener("change", () => {
   exportPasswordWrap.classList.toggle("hidden", !encryptToggle.checked);
 });
 
+// اختيار طريقة التشفير (تلت أزرار حمراء) + أزرار المعلومات تحت كل واحد
+let selectedEncryptMethod = "pbkdf2";
+document.querySelectorAll(".encrypt-method-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    selectedEncryptMethod = btn.dataset.method;
+    document.querySelectorAll(".encrypt-method-btn").forEach((b) => b.classList.toggle("active", b === btn));
+  });
+});
+document.querySelectorAll(".method-info-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const panelId = "methodInfo" + btn.dataset.method.charAt(0).toUpperCase() + btn.dataset.method.slice(1);
+    const panel = document.getElementById(panelId);
+    if (panel) panel.classList.toggle("hidden");
+  });
+});
+
 document.getElementById("cancelExportBtn").addEventListener("click", () => {
   exportModalOverlay.classList.add("hidden");
 });
+
+// حفظ حقيقي على تخزين الجهاز عن طريق إضافة Capacitor الرسمية (Filesystem)
+// بدل الاعتماد على حيلة رابط تحميل المتصفح اللي مش شغالة جوه الـ WebView.
+// بيرجع true لو الحفظ الحقيقي نجح، أو false لو محتاجين نرجع لطريقة المتصفح
+// الاحتياطية (مفيدة برضه وقت تجربة الكود في متصفح عادي على الكمبيوتر).
+async function saveFileToDevice(filename, textContent) {
+  try {
+    const plugins = window.Capacitor && window.Capacitor.Plugins;
+    if (!plugins || !plugins.Filesystem) return { ok: false };
+
+    const { Filesystem, Directory, Encoding } = plugins;
+    await Filesystem.writeFile({
+      path: filename,
+      data: textContent,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+      recursive: true,
+    });
+    return { ok: true, location: "Documents" };
+  } catch (err) {
+    return { ok: false, error: err };
+  }
+}
 
 document.getElementById("confirmExportBtn").addEventListener("click", async () => {
   const useEncryption = encryptToggle.checked;
@@ -1443,23 +1695,31 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   let fileContent;
   if (useEncryption) {
     setProgress("export", 60, "جاري التشفير...");
-    fileContent = await encryptJSON(jsonString, exportPassword.value);
+    fileContent = await encryptJSON(jsonString, exportPassword.value, selectedEncryptMethod);
   } else {
     fileContent = { encrypted: false, data: jsonString };
   }
 
   setProgress("export", 85, "جاري حفظ الملف...");
 
-  const blob = new Blob([JSON.stringify(fileContent)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
   const dateStr = new Date().toISOString().slice(0, 10);
-  a.href = url;
-  a.download = `anime-backup-${dateStr}.animebackup`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const filename = `anime-backup-${dateStr}.animebackup`;
+  const finalText = JSON.stringify(fileContent);
+
+  const nativeResult = await saveFileToDevice(filename, finalText);
+
+  if (!nativeResult.ok) {
+    // احتياطي: طريقة المتصفح العادية (بتشتغل في متصفح كمبيوتر عادي وقت الاختبار)
+    const blob = new Blob([finalText], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   setProgress("export", 100, "تم ✅");
   setTimeout(() => {
@@ -1473,7 +1733,11 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   backupBannerDismissedThisSession = false;
   checkBackupReminder();
 
-  showToast(t("toast_export_done"));
+  if (nativeResult.ok) {
+    showToast(`تم الحفظ في مجلد Documents/${filename} ✅`);
+  } else {
+    showToast(t("toast_export_done"));
+  }
 });
 
 /* ============ مودال الاستيراد ============ */
@@ -1522,10 +1786,31 @@ importFileInput.addEventListener("change", async () => {
   }
 });
 
-// استبدال atomic-ish: بياخد نسخة احتياطية في الذاكرة، ولو فشل أي جزء، بيرجّع القديم
+// حذف عناصر القائمة الحالية بس (مش كل القوائم)، على دفعات صغيرة
+function dbClearCurrentListItems(allItems) {
+  const toDelete = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === currentListId);
+  return new Promise((resolve, reject) => {
+    let i = 0;
+    function nextBatch() {
+      if (i >= toDelete.length) { resolve(); return; }
+      const batch = toDelete.slice(i, i + 25);
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      batch.forEach((it) => store.delete(it.id));
+      tx.oncomplete = () => { i += 25; setTimeout(nextBatch, 20); };
+      tx.onerror = (e) => reject(e);
+    }
+    nextBatch();
+  });
+}
+
+// استبدال atomic-ish: بيمسح عناصر القائمة الحالية بس، ويحط الجديدة بدل منها،
+// من غير ما يلمس أي قائمة تانية خالص
 async function replaceAllDataBatched(newItems, onProgress) {
-  await dbClearAll();
-  await dbBulkPutBatched(newItems, 25, onProgress);
+  const allItemsNow = await dbGetAll();
+  await dbClearCurrentListItems(allItemsNow);
+  const itemsWithListId = newItems.map((it) => ({ ...it, listId: currentListId }));
+  await dbBulkPutBatched(itemsWithListId, 25, onProgress);
 }
 
 document.getElementById("confirmImportBtn").addEventListener("click", async () => {
@@ -1562,13 +1847,20 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
         setProgress("import", pct, `جاري الاستيراد... ${done}/${total}`);
       });
 
-      // استيراد الإعدادات لو موجودة في الملف
+      // نفصل إعدادات القائمة (ألوان/نصوص/حالات) عن الإعدادات العامة للتطبيق
       if (parsed.settings) {
-        const entries = Object.entries(parsed.settings).map(([key, value]) => ({ key, value }));
+        const { colors, texts, statuses, ...globalOnly } = parsed.settings;
+        const entries = Object.entries(globalOnly).map(([key, value]) => ({ key, value }));
         await dbSettingsBulkPut(entries);
+
+        if (colors) appSettings.colors = { ...DEFAULT_COLORS, ...colors };
+        if (texts) appSettings.texts = { ...DEFAULT_TEXTS, ...texts };
+        if (statuses && statuses.length) appSettings.statuses = statuses.map((s) => ({ ...s }));
+        await saveCurrentListSettings();
       }
 
       await loadAppSettingsFromDB();
+      await loadCurrentListSettings();
       await reloadFromDB();
       renderFilterSegments();
 
@@ -1585,7 +1877,6 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
       appSettings = previousSettingsSnapshot;
       render();
       applyColorsToUI();
-      applyAppIdentity();
       applyTexts();
       throw new Error("db-write-failed");
     }
@@ -1806,10 +2097,409 @@ continueWatchingBtn.addEventListener("click", () => {
   render();
 });
 
+/* ============ إدارة القوائم المتعددة ============ */
+
+// استبدال كلمة "أنمي" بكلمة القائمة الجديدة في كل نص، مرة واحدة وقت الإنشاء
+// (مش نظام قوالب حي، عشان يفضل بسيط وتقدر تعدل أي نص بعد كده براحتك)
+function substituteListWord(text, newWord) {
+  if (typeof text !== "string") return text;
+  return text
+    .replace(/الأنمي/g, `ال${newWord}`)
+    .replace(/أنمي/g, newWord)
+    .replace(/انمي/g, newWord);
+}
+
+function buildTextsForNewList(sourceTexts, newWord) {
+  const result = {};
+  Object.entries(sourceTexts).forEach(([key, value]) => {
+    result[key] = substituteListWord(value, newWord);
+  });
+  return result;
+}
+
+async function switchToList(listId) {
+  currentListId = listId;
+  await dbSettingsPut("currentListId", listId);
+  await loadCurrentListSettings();
+  await reloadFromDB();
+  renderFilterSegments();
+  render();
+}
+
+async function createNewList(name) {
+  const id = "list_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+  await dbListPut({
+    id,
+    name,
+    colors: { ...appSettings.colors },
+    statuses: appSettings.statuses.map((s) => ({ ...s })),
+    texts: buildTextsForNewList(appSettings.texts, name),
+  });
+  return id;
+}
+
+const listsModalOverlay = document.getElementById("listsModalOverlay");
+const listsListEl = document.getElementById("listsListEl");
+
+document.getElementById("openListsBtn").addEventListener("click", async () => {
+  dropdownMenu.classList.add("hidden");
+  await renderListsModal();
+  listsModalOverlay.classList.remove("hidden");
+});
+document.getElementById("closeListsBtn").addEventListener("click", () => {
+  listsModalOverlay.classList.add("hidden");
+});
+document.getElementById("currentListBadge").addEventListener("click", async () => {
+  await renderListsModal();
+  listsModalOverlay.classList.remove("hidden");
+});
+
+async function renderListsModal() {
+  const [lists, allItems] = await Promise.all([dbListsGetAll(), dbGetAll()]);
+  const counts = {};
+  allItems.forEach((it) => {
+    const lid = it.listId || DEFAULT_LIST_ID;
+    counts[lid] = (counts[lid] || 0) + 1;
+  });
+
+  listsListEl.innerHTML = lists
+    .map((l) => `
+      <div class="list-row${l.id === currentListId ? " active" : ""}" data-id="${l.id}">
+        <div class="list-row-info">
+          <span class="list-row-name">${escapeHtml(l.name)}</span>
+          <span class="list-row-count">${counts[l.id] || 0} عنصر</span>
+        </div>
+        <div class="list-row-actions">
+          ${l.id === currentListId ? `<span class="list-current-tag">الحالية</span>` : `<button class="btn btn-ghost list-switch-btn" data-id="${l.id}">فتح</button>`}
+          ${lists.length > 1 ? `<button class="list-delete-btn" data-id="${l.id}" data-name="${escapeHtml(l.name)}">🗑️</button>` : ""}
+        </div>
+      </div>
+    `)
+    .join("");
+
+  listsListEl.querySelectorAll(".list-switch-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await switchToList(btn.dataset.id);
+      listsModalOverlay.classList.add("hidden");
+    });
+  });
+
+  listsListEl.querySelectorAll(".list-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const ok = window.confirm(`متأكد إنك عايز تمسح قائمة "${btn.dataset.name}" وكل اللي فيها؟`);
+      if (!ok) return;
+      const allItemsNow = await dbGetAll();
+      await dbDeleteItemsByListId(btn.dataset.id, allItemsNow);
+      await dbListDelete(btn.dataset.id);
+      if (btn.dataset.id === currentListId) {
+        const remaining = await dbListsGetAll();
+        await switchToList(remaining[0].id);
+      }
+      await renderListsModal();
+    });
+  });
+}
+
+document.getElementById("newListBtn").addEventListener("click", async () => {
+  const name = window.prompt("اسم القائمة الجديدة (مثلاً: أفلام)");
+  if (!name || !name.trim()) return;
+  const id = await createNewList(name.trim());
+  await switchToList(id);
+  listsModalOverlay.classList.add("hidden");
+  showToast(`تم إنشاء قائمة "${name.trim()}" ✅`);
+});
+
+/* ================================================================
+   الأسرار (Vault) — شاشة منفصلة تمامًا، مش بتلمس الشاشة الرئيسية
+   ولا دالة render() بتاعتها خالص. تصميم مبسّط عمدًا (كلمة مرور واحدة
+   بس، بدون كلمة استرداد، بدون تشفير مزدوج) عشان يفضل بسيط وسريع
+   ومفيش فيه احتمال فشل معقّد.
+   ================================================================ */
+const VAULT_META_KEY = "vaultMeta";
+const VAULT_VERIFIER_TEXT = "vault-unlock-check";
+const VAULT_AUTO_LOCK_MS = 5 * 60 * 1000; // 5 دقايق خمول = قفل تلقائي
+
+let vaultKey = null; // مفتاح AES-GCM في الذاكرة بس، مش بيتخزن أبدًا
+let vaultNotes = []; // نسخة مفكوكة التشفير في الذاكرة أثناء الفتح بس
+let vaultCurrentNoteId = null;
+let vaultAutoLockTimer = null;
+let vaultFailedAttempts = 0;
+
+async function deriveVaultKey(password, saltBytes) {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: saltBytes, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function vaultEncryptText(key, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+  return { iv: bufToBase64(iv), data: bufToBase64(cipherBuf) };
+}
+async function vaultDecryptText(key, payload) {
+  const iv = new Uint8Array(base64ToBuf(payload.iv));
+  const cipherBuf = base64ToBuf(payload.data);
+  const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherBuf);
+  return new TextDecoder().decode(plainBuf);
+}
+
+function showVaultScreen(id) {
+  document.querySelectorAll(".vault-screen").forEach((s) => s.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+}
+
+function resetVaultAutoLockTimer() {
+  clearTimeout(vaultAutoLockTimer);
+  vaultAutoLockTimer = setTimeout(vaultLock, VAULT_AUTO_LOCK_MS);
+}
+
+function vaultLock() {
+  clearTimeout(vaultAutoLockTimer);
+  vaultKey = null;
+  vaultNotes = [];
+  vaultCurrentNoteId = null;
+  document.getElementById("vaultUnlockPassword").value = "";
+  document.getElementById("vaultOverlay").classList.add("hidden");
+}
+
+async function openVaultOverlay() {
+  document.getElementById("vaultOverlay").classList.remove("hidden");
+  const meta = (await dbSettingsGetAll()).find((r) => r.key === VAULT_META_KEY);
+  if (meta && meta.value) {
+    document.getElementById("vaultUnlockError").classList.add("hidden");
+    document.getElementById("vaultUnlockPassword").value = "";
+    showVaultScreen("vaultUnlockScreen");
+  } else {
+    document.getElementById("vaultSetupError").classList.add("hidden");
+    document.getElementById("vaultSetupPassword").value = "";
+    document.getElementById("vaultSetupPasswordConfirm").value = "";
+    showVaultScreen("vaultSetupScreen");
+  }
+}
+
+document.getElementById("openVaultBtn").addEventListener("click", () => {
+  dropdownMenu.classList.add("hidden");
+  openVaultOverlay();
+});
+
+document.getElementById("vaultSetupCloseBtn").addEventListener("click", () => {
+  document.getElementById("vaultOverlay").classList.add("hidden");
+});
+document.getElementById("vaultUnlockCloseBtn").addEventListener("click", () => {
+  document.getElementById("vaultOverlay").classList.add("hidden");
+});
+document.getElementById("vaultResetCloseBtn").addEventListener("click", () => {
+  document.getElementById("vaultOverlay").classList.add("hidden");
+});
+
+document.getElementById("vaultSetupBtn").addEventListener("click", async () => {
+  const pw = document.getElementById("vaultSetupPassword").value;
+  const pwConfirm = document.getElementById("vaultSetupPasswordConfirm").value;
+  const errEl = document.getElementById("vaultSetupError");
+
+  if (pw.length < 4) {
+    errEl.textContent = "كلمة المرور لازم تكون 4 حروف على الأقل";
+    errEl.classList.remove("hidden");
+    return;
+  }
+  if (pw !== pwConfirm) {
+    errEl.textContent = "كلمتا المرور مش متطابقتين";
+    errEl.classList.remove("hidden");
+    return;
+  }
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveVaultKey(pw, salt);
+  const verifier = await vaultEncryptText(key, VAULT_VERIFIER_TEXT);
+
+  await dbSettingsPut(VAULT_META_KEY, { salt: bufToBase64(salt), verifier });
+
+  vaultKey = key;
+  vaultNotes = [];
+  vaultFailedAttempts = 0;
+  showVaultScreen("vaultNotesScreen");
+  renderVaultNotesList();
+  resetVaultAutoLockTimer();
+});
+
+document.getElementById("vaultUnlockBtn").addEventListener("click", async () => {
+  const pw = document.getElementById("vaultUnlockPassword").value;
+  const errEl = document.getElementById("vaultUnlockError");
+
+  if (vaultFailedAttempts >= 5) {
+    errEl.textContent = "محاولات كتير غلط، استنى شوية وجرب تاني";
+    errEl.classList.remove("hidden");
+    return;
+  }
+
+  const meta = (await dbSettingsGetAll()).find((r) => r.key === VAULT_META_KEY);
+  if (!meta) return;
+
+  try {
+    const salt = new Uint8Array(base64ToBuf(meta.value.salt));
+    const key = await deriveVaultKey(pw, salt);
+    const check = await vaultDecryptText(key, meta.value.verifier);
+    if (check !== VAULT_VERIFIER_TEXT) throw new Error("wrong");
+
+    vaultKey = key;
+    vaultFailedAttempts = 0;
+    errEl.classList.add("hidden");
+
+    const allEncrypted = await dbVaultNotesGetAll();
+    vaultNotes = [];
+    for (const n of allEncrypted) {
+      try {
+        const decrypted = JSON.parse(await vaultDecryptText(key, n));
+        vaultNotes.push({ id: n.id, title: decrypted.title, content: decrypted.content, updatedAt: n.updatedAt, createdAt: n.createdAt });
+      } catch (e) { /* تجاهل ملاحظة تالفة بدل ما توقف الباقي */ }
+    }
+
+    showVaultScreen("vaultNotesScreen");
+    renderVaultNotesList();
+    resetVaultAutoLockTimer();
+  } catch (e) {
+    vaultFailedAttempts++;
+    errEl.textContent = "كلمة المرور غلط";
+    errEl.classList.remove("hidden");
+    if (vaultFailedAttempts >= 5) {
+      setTimeout(() => { vaultFailedAttempts = 0; }, 8000);
+    }
+  }
+});
+
+document.getElementById("vaultForgotBtn").addEventListener("click", () => {
+  showVaultScreen("vaultResetScreen");
+});
+document.getElementById("vaultCancelResetBtn").addEventListener("click", () => {
+  showVaultScreen("vaultUnlockScreen");
+});
+document.getElementById("vaultConfirmResetBtn").addEventListener("click", async () => {
+  const ok = window.confirm("متأكد تمامًا؟ هيتمسح كل شيء نهائيًا وميرجعش.");
+  if (!ok) return;
+  await dbVaultNotesClearAll();
+  const tx = db.transaction(SETTINGS_STORE, "readwrite");
+  tx.objectStore(SETTINGS_STORE).delete(VAULT_META_KEY);
+  tx.oncomplete = () => {
+    vaultKey = null;
+    vaultNotes = [];
+    showToast("تم تصفير الخزنة");
+    showVaultScreen("vaultSetupScreen");
+  };
+});
+
+document.getElementById("vaultLockBtn").addEventListener("click", vaultLock);
+
+/* ---- قائمة الملاحظات ---- */
+function renderVaultNotesList() {
+  const query = document.getElementById("vaultSearchInput").value.trim().toLowerCase();
+  const list = document.getElementById("vaultNotesList");
+  const empty = document.getElementById("vaultEmptyState");
+
+  const filtered = vaultNotes
+    .filter((n) => !query || n.title.toLowerCase().includes(query) || n.content.toLowerCase().includes(query))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  empty.classList.toggle("hidden", filtered.length !== 0);
+  list.innerHTML = filtered
+    .map((n) => `
+      <div class="vault-note-card" data-id="${n.id}">
+        <div class="vault-note-title">${escapeHtml(n.title || "(بدون عنوان)")}</div>
+        <div class="vault-note-snippet">${escapeHtml((n.content || "").slice(0, 60))}</div>
+        <div class="vault-note-time">${formatRelativeDate(n.updatedAt)}</div>
+      </div>
+    `)
+    .join("");
+
+  list.querySelectorAll(".vault-note-card").forEach((card) => {
+    card.addEventListener("click", () => openVaultEditor(card.dataset.id));
+  });
+}
+
+document.getElementById("vaultSearchInput").addEventListener("input", () => {
+  resetVaultAutoLockTimer();
+  renderVaultNotesList();
+});
+document.getElementById("vaultNewNoteBtn").addEventListener("click", () => openVaultEditor(null));
+
+/* ---- محرر الملاحظة ---- */
+let vaultSaveTimer = null;
+
+function openVaultEditor(id) {
+  resetVaultAutoLockTimer();
+  vaultCurrentNoteId = id;
+  const note = id ? vaultNotes.find((n) => n.id === id) : null;
+  document.getElementById("vaultNoteTitle").value = note ? note.title : "";
+  document.getElementById("vaultNoteContent").value = note ? note.content : "";
+  document.getElementById("vaultDeleteNoteBtn").classList.toggle("hidden", !note);
+  document.getElementById("vaultSaveIndicator").textContent = "";
+  showVaultScreen("vaultEditorScreen");
+}
+
+document.getElementById("vaultEditorBackBtn").addEventListener("click", () => {
+  showVaultScreen("vaultNotesScreen");
+  renderVaultNotesList();
+});
+
+async function vaultAutoSave() {
+  const title = document.getElementById("vaultNoteTitle").value.trim();
+  const content = document.getElementById("vaultNoteContent").value;
+  if (!title && !content) return;
+
+  const indicator = document.getElementById("vaultSaveIndicator");
+  indicator.textContent = "جاري الحفظ...";
+
+  const now = Date.now();
+  if (!vaultCurrentNoteId) {
+    vaultCurrentNoteId = "n_" + now + "_" + Math.random().toString(36).slice(2, 8);
+  }
+
+  const plainPayload = JSON.stringify({ title, content });
+  const encrypted = await vaultEncryptText(vaultKey, plainPayload);
+  const existing = vaultNotes.find((n) => n.id === vaultCurrentNoteId);
+  const createdAt = existing ? existing.createdAt : now;
+
+  await dbVaultNotePut({ id: vaultCurrentNoteId, iv: encrypted.iv, data: encrypted.data, createdAt, updatedAt: now });
+
+  const idx = vaultNotes.findIndex((n) => n.id === vaultCurrentNoteId);
+  const updatedNote = { id: vaultCurrentNoteId, title, content, createdAt, updatedAt: now };
+  if (idx >= 0) vaultNotes[idx] = updatedNote;
+  else vaultNotes.push(updatedNote);
+
+  indicator.textContent = "✓ تم الحفظ";
+  document.getElementById("vaultDeleteNoteBtn").classList.remove("hidden");
+}
+
+["vaultNoteTitle", "vaultNoteContent"].forEach((id) => {
+  document.getElementById(id).addEventListener("input", () => {
+    resetVaultAutoLockTimer();
+    clearTimeout(vaultSaveTimer);
+    document.getElementById("vaultSaveIndicator").textContent = "...";
+    vaultSaveTimer = setTimeout(vaultAutoSave, 500);
+  });
+});
+
+document.getElementById("vaultDeleteNoteBtn").addEventListener("click", async () => {
+  if (!vaultCurrentNoteId) return;
+  const ok = window.confirm("تحذف الملاحظة دي؟");
+  if (!ok) return;
+  await dbVaultNoteDelete(vaultCurrentNoteId);
+  vaultNotes = vaultNotes.filter((n) => n.id !== vaultCurrentNoteId);
+  showVaultScreen("vaultNotesScreen");
+  renderVaultNotesList();
+  showToast("تم الحذف 🗑️");
+});
+
 /* ============ بدء التشغيل ============ */
 (async function init() {
   await openDB();
   await loadAppSettingsFromDB();
+  await loadCurrentListSettings();
   await reloadFromDB();
   renderFilterSegments();
   hideFinishedBtn.classList.toggle("active", hideFinishedFilter);
