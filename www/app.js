@@ -1649,17 +1649,23 @@ document.getElementById("cancelExportBtn").addEventListener("click", () => {
 async function saveFileToDevice(filename, textContent) {
   try {
     const plugins = window.Capacitor && window.Capacitor.Plugins;
-    if (!plugins || !plugins.Filesystem) return { ok: false };
+    if (!plugins || !plugins.Filesystem || !plugins.Share) return { ok: false };
 
-    const { Filesystem, Directory, Encoding } = plugins;
-    await Filesystem.writeFile({
-      path: `Download/${filename}`,
+    const { Filesystem, Directory, Encoding, Share } = plugins;
+    const writeResult = await Filesystem.writeFile({
+      path: filename,
       data: textContent,
-      directory: Directory.ExternalStorage,
+      directory: Directory.Cache,
       encoding: Encoding.UTF8,
-      recursive: true,
     });
-    return { ok: true, location: "Download" };
+
+    await Share.share({
+      title: filename,
+      url: writeResult.uri,
+      dialogTitle: "احفظ النسخة الاحتياطية",
+    });
+
+    return { ok: true, location: "shared" };
   } catch (err) {
     return { ok: false, error: err };
   }
@@ -1734,7 +1740,7 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
   checkBackupReminder();
 
   if (nativeResult.ok) {
-    showToast(`تم الحفظ في Download/${filename} ✅`);
+    showToast(`اختار مكان الحفظ من القائمة اللي هتظهر ✅`);
   } else {
     showToast(t("toast_export_done"));
   }
