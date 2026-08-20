@@ -4,3 +4,5 @@ android/build/
 android/.gradle/
 *.log
 anime-tracker-apk/
+*.apk
+monitor.sh

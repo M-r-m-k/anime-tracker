@@ -334,6 +334,9 @@ const DEFAULT_APP_NAME = "Animelist";
 const EXTRA_DEFAULT_TEXTS = {
   menu_lists: "القوائم",
   menu_vault: "🔐 الأسرار",
+  field_label_export_lists: "اختار القوائم اللي عايز تصدّرها",
+  export_include_vault: "تضمين الأسرار (الملاحظات السرية)",
+  export_vault_note: "الملاحظات السرية هتفضل محتاجة كلمة مرور الخزنة بتاعتها حتى لو الملف مش مشفّر بكلمة سر إضافية.",
   menu_settings: "الإعدادات",
   field_label_encrypt_method: "اختار طريقة التشفير",
   method_pbkdf2_name: "تشفير AES-256 (قوي وسريع)",
@@ -1608,15 +1611,38 @@ const exportPasswordWrap = document.getElementById("exportPasswordWrap");
 const exportPassword = document.getElementById("exportPassword");
 const exportPasswordConfirm = document.getElementById("exportPasswordConfirm");
 
-document.getElementById("exportBtn").addEventListener("click", () => {
+document.getElementById("exportBtn").addEventListener("click", async () => {
   dropdownMenu.classList.add("hidden");
   encryptToggle.checked = false;
   exportPasswordWrap.classList.add("hidden");
   exportPassword.value = "";
   exportPasswordConfirm.value = "";
+  document.getElementById("exportIncludeVault").checked = false;
   hideProgress("export");
+  await renderExportListsChecklist();
   exportModalOverlay.classList.remove("hidden");
 });
+
+// عرض قائمة اختيار القوائم (checkboxes) وقت فتح مودال التصدير
+async function renderExportListsChecklist() {
+  const [lists, allItems] = await Promise.all([dbListsGetAll(), dbGetAll()]);
+  const counts = {};
+  allItems.forEach((it) => {
+    const lid = it.listId || DEFAULT_LIST_ID;
+    counts[lid] = (counts[lid] || 0) + 1;
+  });
+
+  const container = document.getElementById("exportListsChecklist");
+  container.innerHTML = lists
+    .map((l) => `
+      <label class="export-list-row">
+        <input type="checkbox" class="export-list-checkbox" data-id="${l.id}" ${l.id === currentListId ? "checked" : ""} />
+        <span>${escapeHtml(l.name)}</span>
+        <span class="export-list-count">${counts[l.id] || 0} عنصر</span>
+      </label>
+    `)
+    .join("");
+}
 
 encryptToggle.addEventListener("change", () => {
   exportPasswordWrap.classList.toggle("hidden", !encryptToggle.checked);
@@ -1679,8 +1705,6 @@ async function saveFileToDevice(filename, textContent) {
       directory: Directory.Cache,
     });
 
-    window.alert("تشخيص: هنفتح شاشة المشاركة دلوقتي...");
-
     await Share.share({
       title: filename,
       url: uriResult.uri,
@@ -1709,22 +1733,70 @@ document.getElementById("confirmExportBtn").addEventListener("click", async () =
     }
   }
 
+  const selectedListIds = Array.from(document.querySelectorAll(".export-list-checkbox:checked")).map((c) => c.dataset.id);
+  if (selectedListIds.length === 0) {
+    showToast("اختار قائمة واحدة على الأقل");
+    return;
+  }
+  const includeVault = document.getElementById("exportIncludeVault").checked;
+
   setProgress("export", 10, "جاري تجهيز البيانات...");
+
+  // نجمع كل قائمة مختارة: عناصرها + ألوانها/حالاتها/نصوصها الخاصة
+  const [allLists, allItems] = await Promise.all([dbListsGetAll(), dbGetAll()]);
+  const listsPayload = selectedListIds.map((lid) => {
+    const listMeta = allLists.find((l) => l.id === lid) || { id: lid, name: lid };
+    const items = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === lid);
+    return {
+      listId: listMeta.id,
+      listName: listMeta.name,
+      colors: listMeta.colors || DEFAULT_COLORS,
+      texts: listMeta.texts || DEFAULT_TEXTS,
+      statuses: listMeta.statuses || DEFAULT_STATUSES,
+      items,
+    };
+  });
+
+  setProgress("export", 25, "جاري تجهيز البيانات...");
+
+  // الإعدادات العامة للتطبيق (مش خاصة بقائمة معيّنة)
+  const globalSettings = {
+    appName: appSettings.appName,
+    logo: appSettings.logo,
+    gallery: appSettings.gallery,
+    backupReminder: appSettings.backupReminder,
+    hideFinishedDefault: appSettings.hideFinishedDefault,
+    recentChanges: appSettings.recentChanges,
+  };
+
+  // الخزنة: بنضيف الملاحظات المشفّرة زي ما هي بالظبط (من غير ما نفكّها)،
+  // فتفضل محتاجة كلمة مرور الخزنة بتاعتها حتى لو الملف نفسه مش مشفّر
+  let vaultPayload = null;
+  if (includeVault) {
+    setProgress("export", 35, "جاري تجهيز الأسرار...");
+    const vaultMetaRow = (await dbSettingsGetAll()).find((r) => r.key === VAULT_META_KEY);
+    const rawNotes = await dbVaultNotesGetAll();
+    vaultPayload = {
+      meta: vaultMetaRow ? vaultMetaRow.value : null,
+      notes: rawNotes,
+    };
+  }
 
   const exportData = {
     appName: "anime-tracker",
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
-    items: animeList,
-    settings: appSettings,
+    lists: listsPayload,
+    globalSettings,
+    vault: vaultPayload,
   };
   const jsonString = JSON.stringify(exportData);
 
-  setProgress("export", 40, "جاري التجهيز...");
+  setProgress("export", 50, "جاري التجهيز...");
 
   let fileContent;
   if (useEncryption) {
-    setProgress("export", 60, "جاري التشفير...");
+    setProgress("export", 65, "جاري التشفير...");
     fileContent = await encryptJSON(jsonString, exportPassword.value, selectedEncryptMethod);
   } else {
     fileContent = { encrypted: false, data: jsonString };
@@ -1867,26 +1939,70 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
     }
 
     const parsed = JSON.parse(jsonString);
-    if (!parsed.items || !Array.isArray(parsed.items)) {
+    const isNewFormat = Array.isArray(parsed.lists);
+    const isOldFormat = Array.isArray(parsed.items);
+
+    if (!isNewFormat && !isOldFormat) {
       throw new Error("invalid structure");
     }
 
     try {
-      await replaceAllDataBatched(parsed.items, (done, total) => {
-        const pct = 15 + (done / total) * 80;
-        setProgress("import", pct, `جاري الاستيراد... ${done}/${total}`);
-      });
+      let totalImportedItems = 0;
 
-      // نفصل إعدادات القائمة (ألوان/نصوص/حالات) عن الإعدادات العامة للتطبيق
-      if (parsed.settings) {
-        const { colors, texts, statuses, ...globalOnly } = parsed.settings;
-        const entries = Object.entries(globalOnly).map(([key, value]) => ({ key, value }));
-        await dbSettingsBulkPut(entries);
+      if (isNewFormat) {
+        // الصيغة الجديدة: قوائم متعددة + إعدادات عامة + خزنة (اختياري)
+        let doneCount = 0;
+        const totalCount = parsed.lists.reduce((sum, l) => sum + l.items.length, 0) || 1;
 
-        if (colors) appSettings.colors = { ...DEFAULT_COLORS, ...colors };
-        if (texts) appSettings.texts = { ...DEFAULT_TEXTS, ...texts };
-        if (statuses && statuses.length) appSettings.statuses = statuses.map((s) => ({ ...s }));
-        await saveCurrentListSettings();
+        for (const listData of parsed.lists) {
+          await dbListPut({
+            id: listData.listId,
+            name: listData.listName,
+            colors: listData.colors,
+            texts: listData.texts,
+            statuses: listData.statuses,
+          });
+
+          const itemsWithListId = listData.items.map((it) => ({ ...it, listId: listData.listId }));
+          const existingForList = (await dbGetAll()).filter((it) => (it.listId || DEFAULT_LIST_ID) === listData.listId);
+          for (const old of existingForList) await dbDelete(old.id);
+
+          await dbBulkPutBatched(itemsWithListId, 25, (done) => {
+            doneCount++;
+            const pct = 15 + (doneCount / totalCount) * 55;
+            setProgress("import", pct, `جاري استيراد "${listData.listName}"...`);
+          });
+          totalImportedItems += listData.items.length;
+        }
+
+        if (parsed.globalSettings) {
+          const entries = Object.entries(parsed.globalSettings).map(([key, value]) => ({ key, value }));
+          await dbSettingsBulkPut(entries);
+        }
+
+        if (parsed.vault && parsed.vault.meta) {
+          setProgress("import", 75, "جاري استيراد الأسرار...");
+          await dbSettingsPut(VAULT_META_KEY, parsed.vault.meta);
+          await dbVaultNotesClearAll();
+          for (const note of parsed.vault.notes) await dbVaultNotePut(note);
+        }
+      } else {
+        // الصيغة القديمة (ملفات اتصدّرت قبل ميزة القوائم المتعددة): نستوردها للقائمة الحالية بس
+        await replaceAllDataBatched(parsed.items, (done, total) => {
+          const pct = 15 + (done / total) * 80;
+          setProgress("import", pct, `جاري الاستيراد... ${done}/${total}`);
+        });
+        totalImportedItems = parsed.items.length;
+
+        if (parsed.settings) {
+          const { colors, texts, statuses, ...globalOnly } = parsed.settings;
+          const entries = Object.entries(globalOnly).map(([key, value]) => ({ key, value }));
+          await dbSettingsBulkPut(entries);
+          if (colors) appSettings.colors = { ...DEFAULT_COLORS, ...colors };
+          if (texts) appSettings.texts = { ...DEFAULT_TEXTS, ...texts };
+          if (statuses && statuses.length) appSettings.statuses = statuses.map((s) => ({ ...s }));
+          await saveCurrentListSettings();
+        }
       }
 
       await loadAppSettingsFromDB();
@@ -1899,7 +2015,7 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
         hideProgress("import");
         importModalOverlay.classList.add("hidden");
       }, 500);
-      showToast(`${t("toast_saved")} (${parsed.items.length})`);
+      showToast(`${t("toast_saved")} (${totalImportedItems} عنصر)`);
     } catch (dbErr) {
       // فشلت الكتابة، نرجّع القديم
       hideProgress("import");

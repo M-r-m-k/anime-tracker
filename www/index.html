@@ -293,6 +293,16 @@
       <h2 data-text-key="export_modal_title">تصدير نسخة احتياطية</h2>
       <p class="modal-desc" data-text-key="export_modal_desc">هيتصدّر ملف واحد فيه كل بياناتك (الأسماء، الصور، الحالات، الشكل العام) تقدر تنقله لأي جهاز.</p>
 
+      <label class="field-label" data-text-key="field_label_export_lists">اختار القوائم اللي عايز تصدّرها</label>
+      <div id="exportListsChecklist" class="export-lists-checklist"></div>
+
+      <label class="switch-row">
+        <span data-text-key="export_include_vault">تضمين الأسرار (الملاحظات السرية)</span>
+        <input type="checkbox" id="exportIncludeVault" />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+      <p class="hint-text" data-text-key="export_vault_note">الملاحظات السرية هتفضل محتاجة كلمة مرور الخزنة بتاعتها حتى لو الملف مش مشفّر بكلمة سر إضافية.</p>
+
       <label class="switch-row">
         <span data-text-key="export_encrypt_label">تشفير الملف بكلمة سر</span>
         <input type="checkbox" id="encryptToggle" />

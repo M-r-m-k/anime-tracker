@@ -912,3 +912,18 @@ body {
 .vault-dates-info span:first-child { color: var(--text-secondary); }
 
 .vault-note-card { border-right: 3px solid var(--text-faint); }
+
+/* ===== قائمة اختيار القوائم وقت التصدير ===== */
+.export-lists-checklist { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+.export-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.export-list-row span:nth-child(2) { flex: 1; font-weight: 600; }
+.export-list-count { font-size: 11px; color: var(--text-faint); }
