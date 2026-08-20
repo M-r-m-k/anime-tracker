@@ -1617,7 +1617,7 @@ document.getElementById("exportBtn").addEventListener("click", async () => {
   exportPasswordWrap.classList.add("hidden");
   exportPassword.value = "";
   exportPasswordConfirm.value = "";
-  document.getElementById("exportIncludeVault").checked = false;
+  document.getElementById("exportIncludeVault").checked = true;
   hideProgress("export");
   await renderExportListsChecklist();
   exportModalOverlay.classList.remove("hidden");
@@ -1636,7 +1636,7 @@ async function renderExportListsChecklist() {
   container.innerHTML = lists
     .map((l) => `
       <label class="export-list-row">
-        <input type="checkbox" class="export-list-checkbox" data-id="${l.id}" ${l.id === currentListId ? "checked" : ""} />
+        <input type="checkbox" class="export-list-checkbox" data-id="${l.id}" checked />
         <span>${escapeHtml(l.name)}</span>
         <span class="export-list-count">${counts[l.id] || 0} عنصر</span>
       </label>
@@ -1689,12 +1689,12 @@ async function saveFileToDevice(filename, textContent) {
   }
 
   try {
-    const { Filesystem, Directory, Encoding, Share } = plugins;
+    const { Filesystem, Share } = plugins;
     await Filesystem.writeFile({
       path: filename,
       data: textContent,
-      directory: Directory.Cache,
-      encoding: Encoding.UTF8,
+      directory: 'CACHE',
+      encoding: 'utf8',
     });
 
     // بنطلب الـ URI بشكل صريح بعد الكتابة (بدل الاعتماد على قيمة الإرجاع
@@ -1702,7 +1702,7 @@ async function saveFileToDevice(filename, textContent) {
     // هنشاركه فعلًا صالح ومتوافق مع نظام مشاركة الملفات بتاع أندرويد
     const uriResult = await Filesystem.getUri({
       path: filename,
-      directory: Directory.Cache,
+      directory: 'CACHE',
     });
 
     await Share.share({
