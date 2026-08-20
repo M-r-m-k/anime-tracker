@@ -1597,8 +1597,52 @@ async function encryptJSON(jsonString, password, method) {
   if (method === "caesar") return caesarEncrypt(jsonString, password);
   return pbkdf2Encrypt(jsonString, password);
 }
+async function decryptChunkedJSON(payload, password) {
+  const method = payload.method;
+
+  if (method === "pbkdf2") {
+    const salt = new Uint8Array(base64ToBuf(payload.salt));
+    const key = await deriveKey(password, salt);
+    let result = "";
+    for (const chunk of payload.chunks) {
+      const iv = new Uint8Array(base64ToBuf(chunk.iv));
+      const cipherBuf = base64ToBuf(chunk.data);
+      const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherBuf);
+      result += new TextDecoder().decode(plainBuf);
+    }
+    return result;
+  }
+
+  if (method === "xor") {
+    const keyBytes = await deriveXorKeyBytes(password);
+    let globalOffset = 0;
+    let result = "";
+    for (const b64chunk of payload.chunks) {
+      const cipherBytes = new Uint8Array(base64ToBuf(b64chunk));
+      const outBytes = new Uint8Array(cipherBytes.length);
+      for (let i = 0; i < cipherBytes.length; i++) {
+        outBytes[i] = cipherBytes[i] ^ keyBytes[(globalOffset + i) % keyBytes.length];
+      }
+      globalOffset += cipherBytes.length;
+      result += new TextDecoder().decode(outBytes);
+    }
+    return result;
+  }
+
+  const shift = passwordToShift(password);
+  let result = "";
+  for (const b64chunk of payload.chunks) {
+    const bytes = new Uint8Array(base64ToBuf(b64chunk));
+    const out = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) out[i] = (bytes[i] - shift + 256) % 256;
+    result += new TextDecoder().decode(out);
+  }
+  return result;
+}
+
 async function decryptJSON(payload, password) {
-  const method = payload.method || "pbkdf2"; // ملفات قديمة قبل إضافة الطرق التلاتة
+  if (payload.chunked) return decryptChunkedJSON(payload, password);
+  const method = payload.method || "pbkdf2";
   if (method === "xor") return xorDecrypt(payload, password);
   if (method === "caesar") return caesarDecrypt(payload, password);
   return pbkdf2Decrypt(payload, password);
@@ -1672,61 +1716,141 @@ document.getElementById("cancelExportBtn").addEventListener("click", () => {
 // المباشرة على مسار معيّن — كده انت اللي تختار فين تحفظ (مدير الملفات،
 // درايف، أي حاجة)، ومفيش أي مشاكل صلاحيات محتملة خالص.
 // النسخة دي بتوريك تشخيص واضح (alert) لو فشل أي جزء، بدل ما تفشل بصمت
-async function saveFileToDevice(filename, textContent) {
-  const plugins = window.Capacitor && window.Capacitor.Plugins;
-
-  if (!window.Capacitor) {
-    window.alert("تشخيص: window.Capacitor مش موجود خالص — التطبيق مش شغال جوه بيئة Capacitor");
-    return { ok: false };
+async function* buildExportChunksGenerator(selectedListIds, includeVault, allLists, allItems, onItemsProgress) {
+  yield '{"appName":"anime-tracker","version":4,"exportedAt":' + JSON.stringify(new Date().toISOString()) + ',"lists":[';
+  const BATCH = 8;
+  let doneItems = 0;
+  for (let li = 0; li < selectedListIds.length; li++) {
+    const lid = selectedListIds[li];
+    const listMeta = allLists.find((l) => l.id === lid) || { id: lid, name: lid };
+    const items = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === lid);
+    const head = (li > 0 ? "," : "") + '{"listId":' + JSON.stringify(listMeta.id) +
+      ',"listName":' + JSON.stringify(listMeta.name) +
+      ',"colors":' + JSON.stringify(listMeta.colors || DEFAULT_COLORS) +
+      ',"texts":' + JSON.stringify(listMeta.texts || DEFAULT_TEXTS) +
+      ',"statuses":' + JSON.stringify(listMeta.statuses || DEFAULT_STATUSES) +
+      ',"items":[';
+    yield head;
+    for (let i = 0; i < items.length; i += BATCH) {
+      const batch = items.slice(i, i + BATCH);
+      const pieces = batch.map((it) => JSON.stringify(it));
+      yield (i > 0 ? "," : "") + pieces.join(",");
+      doneItems += batch.length;
+      if (onItemsProgress) onItemsProgress(doneItems);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    yield "]}";
   }
+  yield "],";
+  const globalSettings = {
+    appName: appSettings.appName,
+    logo: appSettings.logo,
+    gallery: appSettings.gallery,
+    backupReminder: appSettings.backupReminder,
+    hideFinishedDefault: appSettings.hideFinishedDefault,
+    recentChanges: appSettings.recentChanges,
+  };
+  yield '"globalSettings":' + JSON.stringify(globalSettings);
+  if (includeVault) {
+    const vaultMetaRow = (await dbSettingsGetAll()).find((r) => r.key === VAULT_META_KEY);
+    const rawNotes = await dbVaultNotesGetAll();
+    yield ',"vault":{"meta":' + JSON.stringify(vaultMetaRow ? vaultMetaRow.value : null) + ',"notes":[';
+    for (let i = 0; i < rawNotes.length; i += 10) {
+      const batch = rawNotes.slice(i, i + 10);
+      const pieces = batch.map((n) => JSON.stringify(n));
+      yield (i > 0 ? "," : "") + pieces.join(",");
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    yield "]}";
+  } else {
+    yield ',"vault":null';
+  }
+  yield "}";
+}
+
+async function* buildFinalFileChunks(selectedListIds, includeVault, allLists, allItems, useEncryption, method, password, onItemsProgress) {
+  if (!useEncryption) {
+    yield '{"encrypted":false,"version":4,"payload":';
+    for await (const chunk of buildExportChunksGenerator(selectedListIds, includeVault, allLists, allItems, onItemsProgress)) {
+      yield chunk;
+    }
+    yield "}";
+    return;
+  }
+  if (method === "pbkdf2") {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const key = await deriveKey(password, salt);
+    yield '{"encrypted":true,"method":"pbkdf2","chunked":true,"salt":"' + bufToBase64(salt) + '","chunks":[';
+    let first = true;
+    for await (const plainChunk of buildExportChunksGenerator(selectedListIds, includeVault, allLists, allItems, onItemsProgress)) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(plainChunk));
+      yield (first ? "" : ",") + '{"iv":"' + bufToBase64(iv) + '","data":"' + bufToBase64(cipherBuf) + '"}';
+      first = false;
+    }
+    yield "]}";
+    return;
+  }
+  if (method === "xor") {
+    const keyBytes = await deriveXorKeyBytes(password);
+    let globalOffset = 0;
+    yield '{"encrypted":true,"method":"xor","chunked":true,"chunks":[';
+    let first = true;
+    for await (const plainChunk of buildExportChunksGenerator(selectedListIds, includeVault, allLists, allItems, onItemsProgress)) {
+      const dataBytes = new TextEncoder().encode(plainChunk);
+      const outBytes = new Uint8Array(dataBytes.length);
+      for (let i = 0; i < dataBytes.length; i++) {
+        outBytes[i] = dataBytes[i] ^ keyBytes[(globalOffset + i) % keyBytes.length];
+      }
+      globalOffset += dataBytes.length;
+      yield (first ? "" : ",") + '"' + bufToBase64(outBytes.buffer) + '"';
+      first = false;
+    }
+    yield "]}";
+    return;
+  }
+  const shift = passwordToShift(password);
+  yield '{"encrypted":true,"method":"caesar","chunked":true,"chunks":[';
+  let first = true;
+  for await (const plainChunk of buildExportChunksGenerator(selectedListIds, includeVault, allLists, allItems, onItemsProgress)) {
+    const bytes = new TextEncoder().encode(plainChunk);
+    const out = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) out[i] = (bytes[i] + shift) % 256;
+    yield (first ? "" : ",") + '"' + bufToBase64(out.buffer) + '"';
+    first = false;
+  }
+  yield "]}";
+}
+
+async function streamExportToDevice(filename, chunkGenerator) {
+  const plugins = window.Capacitor && window.Capacitor.Plugins;
   if (!plugins || !plugins.Filesystem) {
-    window.alert("تشخيص: إضافة Filesystem مش متسجلة. الحلول: 1) تأكد إن @capacitor/filesystem موجودة في package.json 2) تأكد إن npx cap sync android اتنفذت في البناء");
+    window.alert("تشخيص: إضافة Filesystem مش متسجلة.");
     return { ok: false };
   }
   if (!plugins.Share) {
-    window.alert("تشخيص: إضافة Share مش متسجلة. تأكد إن @capacitor/share موجودة في package.json");
+    window.alert("تشخيص: إضافة Share مش متسجلة.");
     return { ok: false };
   }
-
   try {
     const { Filesystem, Share } = plugins;
-
-    // بنكتب الملف على دفعات صغيرة بدل ما نبعت النص كله دفعة واحدة عبر
-    // الـ bridge بتاع الويب فيو. الملفات الكبيرة (فيها صور كتير) بتخلي
-    // الاستدعاء الواحد ده يكرش أو يهنج على الأجهزة الضعيفة زي دي
-    const CHUNK_SIZE = 500000;
-    const totalChunks = Math.max(1, Math.ceil(textContent.length / CHUNK_SIZE));
-
-    await Filesystem.writeFile({
-      path: filename,
-      data: textContent.slice(0, CHUNK_SIZE),
-      directory: 'CACHE',
-      encoding: 'utf8',
-    });
-    setProgress("export", 85 + (1 / totalChunks) * 10, `جاري كتابة الملف... 1/${totalChunks}`);
-
-    for (let i = 1, offset = CHUNK_SIZE; offset < textContent.length; i++, offset += CHUNK_SIZE) {
-      await Filesystem.appendFile({
-        path: filename,
-        data: textContent.slice(offset, offset + CHUNK_SIZE),
-        directory: 'CACHE',
-        encoding: 'utf8',
-      });
-      setProgress("export", 85 + ((i + 1) / totalChunks) * 10, `جاري كتابة الملف... ${i + 1}/${totalChunks}`);
-      if (i % 5 === 0) await new Promise((r) => setTimeout(r, 15));
+    let isFirst = true;
+    let writeCount = 0;
+    for await (const chunkText of chunkGenerator) {
+      if (isFirst) {
+        await Filesystem.writeFile({ path: filename, data: chunkText, directory: "CACHE", encoding: "utf8" });
+        isFirst = false;
+      } else {
+        await Filesystem.appendFile({ path: filename, data: chunkText, directory: "CACHE", encoding: "utf8" });
+      }
+      writeCount++;
+      if (writeCount % 4 === 0) await new Promise((r) => setTimeout(r, 20));
     }
-
-    const uriResult = await Filesystem.getUri({
-      path: filename,
-      directory: 'CACHE',
-    });
-
-    await Share.share({
-      title: filename,
-      url: uriResult.uri,
-      dialogTitle: "احفظ النسخة الاحتياطية",
-    });
-
+    if (isFirst) {
+      await Filesystem.writeFile({ path: filename, data: "", directory: "CACHE", encoding: "utf8" });
+    }
+    const uriResult = await Filesystem.getUri({ path: filename, directory: "CACHE" });
+    await Share.share({ title: filename, url: uriResult.uri, dialogTitle: "احفظ النسخة الاحتياطية" });
     return { ok: true, location: "shared" };
   } catch (err) {
     const msg = (err && (err.message || err.errorMessage)) || JSON.stringify(err);
@@ -1737,121 +1861,58 @@ async function saveFileToDevice(filename, textContent) {
 
 document.getElementById("confirmExportBtn").addEventListener("click", async () => {
   const useEncryption = encryptToggle.checked;
-
   if (useEncryption) {
-    if (exportPassword.value.length < 4) {
-      showToast(t("toast_password_short"));
-      return;
-    }
-    if (exportPassword.value !== exportPasswordConfirm.value) {
-      showToast(t("toast_password_mismatch"));
-      return;
-    }
+    if (exportPassword.value.length < 4) { showToast(t("toast_password_short")); return; }
+    if (exportPassword.value !== exportPasswordConfirm.value) { showToast(t("toast_password_mismatch")); return; }
   }
-
   const selectedListIds = Array.from(document.querySelectorAll(".export-list-checkbox:checked")).map((c) => c.dataset.id);
-  if (selectedListIds.length === 0) {
-    showToast("اختار قائمة واحدة على الأقل");
-    return;
-  }
+  if (selectedListIds.length === 0) { showToast("اختار قائمة واحدة على الأقل"); return; }
   const includeVault = document.getElementById("exportIncludeVault").checked;
-
-  setProgress("export", 10, "جاري تجهيز البيانات...");
-
-  // نجمع كل قائمة مختارة: عناصرها + ألوانها/حالاتها/نصوصها الخاصة
+  setProgress("export", 3, "جاري القراءة من القاعدة...");
   const [allLists, allItems] = await Promise.all([dbListsGetAll(), dbGetAll()]);
-  const listsPayload = selectedListIds.map((lid) => {
-    const listMeta = allLists.find((l) => l.id === lid) || { id: lid, name: lid };
-    const items = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === lid);
-    return {
-      listId: listMeta.id,
-      listName: listMeta.name,
-      colors: listMeta.colors || DEFAULT_COLORS,
-      texts: listMeta.texts || DEFAULT_TEXTS,
-      statuses: listMeta.statuses || DEFAULT_STATUSES,
-      items,
-    };
-  });
-
-  setProgress("export", 25, "جاري تجهيز البيانات...");
-
-  // الإعدادات العامة للتطبيق (مش خاصة بقائمة معيّنة)
-  const globalSettings = {
-    appName: appSettings.appName,
-    logo: appSettings.logo,
-    gallery: appSettings.gallery,
-    backupReminder: appSettings.backupReminder,
-    hideFinishedDefault: appSettings.hideFinishedDefault,
-    recentChanges: appSettings.recentChanges,
-  };
-
-  // الخزنة: بنضيف الملاحظات المشفّرة زي ما هي بالظبط (من غير ما نفكّها)،
-  // فتفضل محتاجة كلمة مرور الخزنة بتاعتها حتى لو الملف نفسه مش مشفّر
-  let vaultPayload = null;
-  if (includeVault) {
-    setProgress("export", 35, "جاري تجهيز الأسرار...");
-    const vaultMetaRow = (await dbSettingsGetAll()).find((r) => r.key === VAULT_META_KEY);
-    const rawNotes = await dbVaultNotesGetAll();
-    vaultPayload = {
-      meta: vaultMetaRow ? vaultMetaRow.value : null,
-      notes: rawNotes,
-    };
-  }
-
-  const exportData = {
-    appName: "anime-tracker",
-    version: 3,
-    exportedAt: new Date().toISOString(),
-    lists: listsPayload,
-    globalSettings,
-    vault: vaultPayload,
-  };
-  const jsonString = JSON.stringify(exportData);
-
-  setProgress("export", 50, "جاري التجهيز...");
-
-  let fileContent;
-  if (useEncryption) {
-    setProgress("export", 65, "جاري التشفير...");
-    fileContent = await encryptJSON(jsonString, exportPassword.value, selectedEncryptMethod);
-  } else {
-    fileContent = { encrypted: false, data: jsonString };
-  }
-
-  setProgress("export", 85, "جاري حفظ الملف...");
-
+  const totalItemsCount = allItems.filter((it) => selectedListIds.includes(it.listId || DEFAULT_LIST_ID)).length || 1;
   const dateStr = new Date().toISOString().slice(0, 10);
   const filename = `anime-backup-${dateStr}.json`;
-  const finalText = JSON.stringify(fileContent);
-
-  const nativeResult = await saveFileToDevice(filename, finalText);
-
-  if (!nativeResult.ok) {
-    // احتياطي: طريقة المتصفح العادية (بتشتغل في متصفح كمبيوتر عادي وقت الاختبار)
-    const blob = new Blob([finalText], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  function onItemsProgress(done) {
+    const pct = 3 + (Math.min(done, totalItemsCount) / totalItemsCount) * 90;
+    setProgress("export", pct, `جاري التصدير... ${Math.min(done, totalItemsCount)}/${totalItemsCount}`);
   }
-
-  setProgress("export", 100, "تم ✅");
-  setTimeout(() => {
+  let nativeResult;
+  try {
+    if (window.Capacitor) {
+      nativeResult = await streamExportToDevice(
+        filename,
+        buildFinalFileChunks(selectedListIds, includeVault, allLists, allItems, useEncryption, selectedEncryptMethod, exportPassword.value, onItemsProgress)
+      );
+    } else {
+      const parts = [];
+      for await (const chunk of buildFinalFileChunks(selectedListIds, includeVault, allLists, allItems, useEncryption, selectedEncryptMethod, exportPassword.value, onItemsProgress)) {
+        parts.push(chunk);
+      }
+      const blob = new Blob(parts, { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      nativeResult = { ok: true, location: "browser-download" };
+    }
+  } catch (err) {
     hideProgress("export");
-    exportModalOverlay.classList.add("hidden");
-  }, 500);
-
-  // نسجّل وقت آخر تصدير ناجح عشان تذكير النسخة الاحتياطية يحسب صح
+    window.alert("تشخيص فشل التصدير:\n" + ((err && err.message) || JSON.stringify(err)));
+    return;
+  }
+  if (!nativeResult.ok) { hideProgress("export"); return; }
+  setProgress("export", 100, "تم ✅");
+  setTimeout(() => { hideProgress("export"); exportModalOverlay.classList.add("hidden"); }, 500);
   appSettings.backupReminder.lastExportAt = Date.now();
   await dbSettingsPut("backupReminder", appSettings.backupReminder);
   backupBannerDismissedThisSession = false;
   checkBackupReminder();
-
-  if (nativeResult.ok) {
+  if (nativeResult.location === "shared") {
     showToast(`اختار مكان الحفظ من القائمة اللي هتظهر ✅`);
   } else {
     showToast(t("toast_export_done"));
@@ -1941,7 +2002,7 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
   const previousSettingsSnapshot = { ...appSettings };
 
   try {
-    let jsonString;
+    let parsed;
     if (pendingImportPayload.encrypted) {
       if (!importPassword.value) {
         importError.textContent = t("import_error_password_needed");
@@ -1949,12 +2010,13 @@ document.getElementById("confirmImportBtn").addEventListener("click", async () =
         return;
       }
       setProgress("import", 10, "جاري فك التشفير...");
-      jsonString = await decryptJSON(pendingImportPayload, importPassword.value);
+      const jsonString = await decryptJSON(pendingImportPayload, importPassword.value);
+      parsed = JSON.parse(jsonString);
+    } else if (pendingImportPayload.payload) {
+      parsed = pendingImportPayload.payload;
     } else {
-      jsonString = pendingImportPayload.data;
+      parsed = JSON.parse(pendingImportPayload.data);
     }
-
-    const parsed = JSON.parse(jsonString);
     const isNewFormat = Array.isArray(parsed.lists);
     const isOldFormat = Array.isArray(parsed.items);
 
