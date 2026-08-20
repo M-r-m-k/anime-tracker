@@ -1690,16 +1690,32 @@ async function saveFileToDevice(filename, textContent) {
 
   try {
     const { Filesystem, Share } = plugins;
+
+    // بنكتب الملف على دفعات صغيرة بدل ما نبعت النص كله دفعة واحدة عبر
+    // الـ bridge بتاع الويب فيو. الملفات الكبيرة (فيها صور كتير) بتخلي
+    // الاستدعاء الواحد ده يكرش أو يهنج على الأجهزة الضعيفة زي دي
+    const CHUNK_SIZE = 500000;
+    const totalChunks = Math.max(1, Math.ceil(textContent.length / CHUNK_SIZE));
+
     await Filesystem.writeFile({
       path: filename,
-      data: textContent,
+      data: textContent.slice(0, CHUNK_SIZE),
       directory: 'CACHE',
       encoding: 'utf8',
     });
+    setProgress("export", 85 + (1 / totalChunks) * 10, `جاري كتابة الملف... 1/${totalChunks}`);
 
-    // بنطلب الـ URI بشكل صريح بعد الكتابة (بدل الاعتماد على قيمة الإرجاع
-    // من writeFile مباشرة) — ده النمط الموصى بيه لضمان إن الرابط اللي
-    // هنشاركه فعلًا صالح ومتوافق مع نظام مشاركة الملفات بتاع أندرويد
+    for (let i = 1, offset = CHUNK_SIZE; offset < textContent.length; i++, offset += CHUNK_SIZE) {
+      await Filesystem.appendFile({
+        path: filename,
+        data: textContent.slice(offset, offset + CHUNK_SIZE),
+        directory: 'CACHE',
+        encoding: 'utf8',
+      });
+      setProgress("export", 85 + ((i + 1) / totalChunks) * 10, `جاري كتابة الملف... ${i + 1}/${totalChunks}`);
+      if (i % 5 === 0) await new Promise((r) => setTimeout(r, 15));
+    }
+
     const uriResult = await Filesystem.getUri({
       path: filename,
       directory: 'CACHE',
