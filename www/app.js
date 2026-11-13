@@ -615,6 +615,17 @@ function getProgress(anime) {
   return { current: clampedCurrent, total, percent };
 }
 
+// إعادة الترتيب مسموحة فقط عندما تكون القائمة كاملة ومعروضة بترتيبها اليدوي.
+// يمنع ذلك حفظ ترتيب جزئي ناتج عن البحث أو الفلاتر أو الفرز المؤقت.
+function canManualReorder() {
+  return currentSort === "manual" &&
+    !searchInput.value.trim() &&
+    !selectedFilterStatus &&
+    !pinnedOnlyFilter &&
+    !hideFinishedFilter &&
+    !continueWatchingFilter;
+}
+
 function buildBlockInner(anime) {
   const meta = getStatusMeta(anime.status);
   const hasNotes = !!(anime.notes && anime.notes.trim());
@@ -630,7 +641,7 @@ function buildBlockInner(anime) {
             : `<div class="no-image"><svg viewBox="0 0 24 24" width="30" height="30"><path fill="currentColor" opacity="0.4" d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg></div>`
         }
         ${isPinned ? `<span class="pin-badge">📌</span>` : ""}
-        ${editMode ? `<button class="drag-handle" data-id="${anime.id}" title="اسحب للترتيب">⠿</button>` : ""}
+        ${editMode && canManualReorder() ? `<button class="drag-handle" data-id="${anime.id}" title="اسحب للترتيب اليدوي" aria-label="اسحب للترتيب اليدوي">⠿</button>` : ""}
         ${editMode ? `<button class="card-edit-btn" data-id="${anime.id}"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>` : ""}
       </div>
       <div class="card-info">
@@ -655,7 +666,7 @@ function buildBlockInner(anime) {
 }
 
 function buildAnimeBlock(anime) {
-  return `<div class="anime-block" data-block-id="${anime.id}">${buildBlockInner(anime)}</div>`;
+  return `<div class="anime-block" data-block-id="${anime.id}" data-pinned="${anime.pinned ? "1" : "0"}">${buildBlockInner(anime)}</div>`;
 }
 
 function getFilteredSortedList() {
@@ -759,35 +770,47 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/* ============ السحب والترتيب اليدوي (Pointer Events - خفيف ومناسب للمس) ============
-   شغّال بس في وضع التعديل، وبيحرك العناصر في الـ DOM مباشرة أثناء السحب
-   من غير أي كتابة في القاعدة إلا لما تسيب إصبعك (عشان مايبقاش فيه أي تهنيج أثناء الحركة) */
-const dragState = { active: false, blockEl: null, startY: 0, startIndex: 0 };
+/* ============ السحب والترتيب اليدوي ============
+   لا يسمح بالسحب إلا في العرض اليدوي الكامل، حتى لا تتحول نتيجة فلتر أو فرز
+   مؤقت إلى ترتيب دائم أو تتسبب في تكرار قيم order للعناصر المخفية. */
+const dragState = { active: false, blockEl: null, pointerId: null };
+
+function finishManualDrag() {
+  if (!dragState.active) return;
+  dragState.active = false;
+  if (dragState.blockEl) dragState.blockEl.classList.remove("dragging");
+  dragState.blockEl = null;
+  dragState.pointerId = null;
+}
 
 grid.addEventListener("pointerdown", (e) => {
   const handle = e.target.closest(".drag-handle");
-  if (!handle || !editMode) return;
+  if (!handle || !editMode || !canManualReorder()) return;
   const block = handle.closest(".anime-block");
   if (!block) return;
 
+  e.preventDefault();
   dragState.active = true;
   dragState.blockEl = block;
-  dragState.startY = e.clientY;
+  dragState.pointerId = e.pointerId;
   block.classList.add("dragging");
-  handle.setPointerCapture(e.pointerId);
+  try { handle.setPointerCapture(e.pointerId); } catch (_) {}
 });
 
 grid.addEventListener("pointermove", (e) => {
-  if (!dragState.active || !dragState.blockEl) return;
-  const dragged = dragState.blockEl;
-  const siblings = Array.from(grid.querySelectorAll(".anime-block")).filter((el) => el !== dragged);
+  if (!dragState.active || !dragState.blockEl || e.pointerId !== dragState.pointerId) return;
+  if (!canManualReorder()) return;
 
-  // نلاقي أول عنصر تحت الإصبع اللي منتصفه أسفل نقطة اللمس، ونحط الكارت المسحوب قبله
+  const dragged = dragState.blockEl;
+  const draggedPinned = dragged.dataset.pinned === "1";
+  // العناصر المثبتة تظل في مجموعتها، والعناصر العادية في مجموعتها.
+  const siblings = Array.from(grid.querySelectorAll(".anime-block"))
+    .filter((el) => el !== dragged && (el.dataset.pinned === "1") === draggedPinned);
+
   let targetEl = null;
   for (const sib of siblings) {
     const rect = sib.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    if (e.clientY < midY) {
+    if (e.clientY < rect.top + rect.height / 2) {
       targetEl = sib;
       break;
     }
@@ -795,36 +818,63 @@ grid.addEventListener("pointermove", (e) => {
 
   if (targetEl) {
     if (targetEl !== dragged.nextElementSibling) grid.insertBefore(dragged, targetEl);
-  } else {
-    // مفيش عنصر تحت الإصبع (يعني وصلنا لآخر القائمة)، نحط الكارت في الآخر
-    if (grid.lastElementChild !== dragged) grid.appendChild(dragged);
+  } else if (draggedPinned) {
+    const firstUnpinned = Array.from(grid.querySelectorAll('.anime-block'))
+      .find((el) => el.dataset.pinned !== "1");
+    if (firstUnpinned) grid.insertBefore(dragged, firstUnpinned);
+    else if (grid.lastElementChild !== dragged) grid.appendChild(dragged);
+  } else if (grid.lastElementChild !== dragged) {
+    grid.appendChild(dragged);
   }
 });
 
-grid.addEventListener("pointerup", async () => {
-  if (!dragState.active) return;
-  dragState.active = false;
-  if (dragState.blockEl) dragState.blockEl.classList.remove("dragging");
-  dragState.blockEl = null;
+async function saveManualOrder() {
+  if (!canManualReorder()) {
+    render();
+    return;
+  }
 
-  // نحفظ الترتيب الجديد بس للعناصر الظاهرة دلوقتي على الشاشة
   const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+  // تحقق دفاعي: لازم تكون كل عناصر القائمة الحالية ظاهرة قبل حفظ أي ترتيب.
+  if (blocks.length !== animeList.length) {
+    render();
+    showToast("لم يتم حفظ الترتيب لأن القائمة ليست معروضة بالكامل");
+    return;
+  }
+
   const updates = [];
   blocks.forEach((block, index) => {
-    const anime = animeList.find((a) => a.id === block.dataset.blockId);
+    const anime = animeList.find((item) => item.id === block.dataset.blockId);
     if (anime && anime.order !== index) {
       anime.order = index;
       updates.push(anime);
     }
   });
 
-  if (updates.length > 0) {
-    await dbBulkPutBatched(updates, 25);
-    showToast(t("toast_reorder_saved"));
+  if (updates.length) {
+    try {
+      await dbBulkPutBatched(updates, 25);
+      showToast(t("toast_reorder_saved"));
+    } catch (error) {
+      console.error("Failed to save manual order", error);
+      showToast("تعذر حفظ الترتيب. حاول مرة أخرى");
+      await reloadFromDB();
+    }
   }
+}
+
+grid.addEventListener("pointerup", async (e) => {
+  if (!dragState.active || e.pointerId !== dragState.pointerId) return;
+  finishManualDrag();
+  await saveManualOrder();
 });
 
-// تحديث سريع لكارت واحد بس، من غير إعادة بناء الشاشة كلها
+grid.addEventListener("pointercancel", () => {
+  if (!dragState.active) return;
+  finishManualDrag();
+  render();
+});
+
 function tryUpdateCardInPlace(anime) {
   if (selectedFilterStatus && anime.status !== selectedFilterStatus) return false;
 
@@ -2288,6 +2338,7 @@ document.getElementById("sortBtn").addEventListener("click", (e) => {
 });
 document.querySelectorAll(".sort-option").forEach((btn) => {
   btn.addEventListener("click", () => {
+    if (dragState.active) finishManualDrag();
     currentSort = btn.dataset.sort;
     document.querySelectorAll(".sort-option").forEach((b) => b.classList.toggle("active", b === btn));
     sortMenu.classList.add("hidden");
