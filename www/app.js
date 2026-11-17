@@ -435,6 +435,9 @@ async function logRecentChange(type, animeName) {
 /* ============ حالة التطبيق ============ */
 let animeList = [];
 let editMode = false;
+let selectMode = false; // وضع التحديد المتعدد للنقل
+let selectPinned = false; // المجموعة المحددة: مثبت أو عادي
+const selectedIds = new Set();
 let currentEditId = null;
 let pickedImageDataUrl = null;
 let selectedAnimeStatus = "";
@@ -711,6 +714,10 @@ function render() {
   const filtered = getFilteredSortedList();
   emptyState.classList.toggle("hidden", filtered.length !== 0);
   grid.innerHTML = filtered.map(buildAnimeBlock).join("");
+  if (selectMode) {
+    if (canManualReorder()) refreshSelectionUI();
+    else exitSelectMode();
+  }
 }
 
 // مستمع أحداث واحد بس على الشاشة كلها (Event Delegation) بدل ما كل كارت
@@ -718,6 +725,24 @@ function render() {
 // نعيد ربطه بعد كل إعادة بناء جزئية أو كاملة
 grid.addEventListener("click", (e) => {
   if (dragState.active) return; // متجاهلش أي دوسة أثناء عملية سحب شغالة
+  if (Date.now() < suppressClickUntil) return; // الدوسة اللي بعد الضغطة الطويلة
+
+  // في وضع التحديد: الدوس بيحدد/يلغي التحديد، أو بينقل لو دوست على «انقل هنا»
+  if (selectMode) {
+    const slot = e.target.closest(".move-slot");
+    if (slot) {
+      let target = slot.nextElementSibling;
+      while (target && (target.classList.contains("move-slot") || target.classList.contains("selected"))) {
+        target = target.nextElementSibling;
+      }
+      moveSelected(target);
+      return;
+    }
+    if (e.target.closest(".notes-panel")) return;
+    const blk = e.target.closest(".anime-block");
+    if (blk) toggleSelect(blk);
+    return;
+  }
 
   const editBtn = e.target.closest(".card-edit-btn");
   if (editBtn) {
@@ -770,68 +795,189 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-/* ============ السحب والترتيب اليدوي ============
-   لا يسمح بالسحب إلا في العرض اليدوي الكامل، حتى لا تتحول نتيجة فلتر أو فرز
-   مؤقت إلى ترتيب دائم أو تتسبب في تكرار قيم order للعناصر المخفية. */
-const dragState = { active: false, blockEl: null, pointerId: null };
+/* ============ السحب والترتيب اليدوي (سلس) ============
+   لا يسمح بالسحب إلا في العرض اليدوي الكامل (من غير بحث/فلاتر/فرز مؤقت)، وجوه نفس
+   المجموعة (المثبت أو العادي). الكارت بيمشي مع إصبعك بالـ transform والباقي بيتزحلق،
+   والشاشة بتنزل/تطلع لوحدها عند الأطراف. الترتيب بيتحفظ مرة واحدة لما تسيب إصبعك. */
+const dragState = {
+  active: false, blockEl: null, pointerId: null, handle: null,
+  items: null, from: 0, to: 0, gs: 0, ge: 0, shifts: null,
+  dh: 0, startY: 0, startScroll: 0, lastY: 0, raf: 0,
+};
+const DRAG_GAP = 12;
+const getScroller = () => document.scrollingElement || document.documentElement;
 
+// إلغاء السحب بدون حفظ (مستخدم عند pointercancel وعند تغيير الفرز)
 function finishManualDrag() {
   if (!dragState.active) return;
-  dragState.active = false;
-  if (dragState.blockEl) dragState.blockEl.classList.remove("dragging");
-  dragState.blockEl = null;
-  dragState.pointerId = null;
+  const d = dragState;
+  d.active = false;
+  cancelAnimationFrame(d.raf);
+  try { if (d.handle) d.handle.releasePointerCapture(d.pointerId); } catch (_) {}
+  grid.classList.remove("drag-active");
+  if (d.items) d.items.forEach((it) => { it.el.style.transform = ""; });
+  if (d.blockEl) d.blockEl.classList.remove("dragging");
+  d.items = null;
+  d.blockEl = null;
+  d.handle = null;
+  d.pointerId = null;
 }
 
 grid.addEventListener("pointerdown", (e) => {
   const handle = e.target.closest(".drag-handle");
-  if (!handle || !editMode || !canManualReorder()) return;
+  if (!handle || !editMode || selectMode || !canManualReorder()) return;
   const block = handle.closest(".anime-block");
   if (!block) return;
 
   e.preventDefault();
+  const sc = getScroller().scrollTop;
+  const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+  const items = blocks.map((el) => {
+    const r = el.getBoundingClientRect();
+    return { el, top: r.top + sc, h: r.height };
+  });
+  const from = blocks.indexOf(block);
+  const pinned = block.dataset.pinned === "1";
+  let gs = from, ge = from;
+  blocks.forEach((el, i) => {
+    if ((el.dataset.pinned === "1") === pinned) {
+      if (i < gs) gs = i;
+      if (i > ge) ge = i;
+    }
+  });
+
   dragState.active = true;
   dragState.blockEl = block;
   dragState.pointerId = e.pointerId;
+  dragState.handle = handle;
+  dragState.items = items;
+  dragState.from = from;
+  dragState.to = from;
+  dragState.gs = gs;
+  dragState.ge = ge;
+  dragState.shifts = new Array(items.length).fill(0);
+  dragState.dh = items[from].h + DRAG_GAP;
+  dragState.startY = e.clientY;
+  dragState.lastY = e.clientY;
+  dragState.startScroll = sc;
+
+  grid.classList.add("drag-active");
   block.classList.add("dragging");
   try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  dragState.raf = requestAnimationFrame(dragTick);
 });
 
-grid.addEventListener("pointermove", (e) => {
-  if (!dragState.active || !dragState.blockEl || e.pointerId !== dragState.pointerId) return;
-  if (!canManualReorder()) return;
+function dragUpdate() {
+  const d = dragState;
+  if (!d.active || !d.items) return;
+  const me = d.items[d.from];
+  // الكارت يفضل جوه منطقة مجموعته (المثبت فوق، العادي تحت)
+  const minDy = d.items[d.gs].top - me.top;
+  const maxDy = d.items[d.ge].top + d.items[d.ge].h - (me.top + me.h);
+  let dy = d.lastY - d.startY + (getScroller().scrollTop - d.startScroll);
+  dy = Math.max(minDy, Math.min(maxDy, dy));
+  d.blockEl.style.transform = `translate3d(0,${dy}px,0) scale(1.02)`;
 
-  const dragged = dragState.blockEl;
-  const draggedPinned = dragged.dataset.pinned === "1";
-  // العناصر المثبتة تظل في مجموعتها، والعناصر العادية في مجموعتها.
-  const siblings = Array.from(grid.querySelectorAll(".anime-block"))
-    .filter((el) => el !== dragged && (el.dataset.pinned === "1") === draggedPinned);
+  const center = me.top + me.h / 2 + dy;
+  let to = 0;
+  for (let k = 0; k < d.items.length; k++) {
+    if (k === d.from) continue;
+    const o = d.items[k];
+    if (o.top + o.h / 2 < center) to++;
+  }
+  to = Math.max(d.gs, Math.min(d.ge, to));
+  if (to === d.to) return;
+  d.to = to;
 
-  let targetEl = null;
-  for (const sib of siblings) {
-    const rect = sib.getBoundingClientRect();
-    if (e.clientY < rect.top + rect.height / 2) {
-      targetEl = sib;
-      break;
+  for (let k = 0; k < d.items.length; k++) {
+    let s = 0;
+    if (k !== d.from) {
+      if (d.from < to && k > d.from && k <= to) s = -d.dh;
+      else if (d.from > to && k >= to && k < d.from) s = d.dh;
+    }
+    if (s !== d.shifts[k]) {
+      d.shifts[k] = s;
+      d.items[k].el.style.transform = s ? `translate3d(0,${s}px,0)` : "";
     }
   }
+}
 
-  if (targetEl) {
-    if (targetEl !== dragged.nextElementSibling) grid.insertBefore(dragged, targetEl);
-  } else if (draggedPinned) {
-    const firstUnpinned = Array.from(grid.querySelectorAll('.anime-block'))
-      .find((el) => el.dataset.pinned !== "1");
-    if (firstUnpinned) grid.insertBefore(dragged, firstUnpinned);
-    else if (grid.lastElementChild !== dragged) grid.appendChild(dragged);
-  } else if (grid.lastElementChild !== dragged) {
-    grid.appendChild(dragged);
+// تمرير تلقائي لما الإصبع يقرب من أول/آخر الشاشة أثناء السحب
+function dragTick() {
+  const d = dragState;
+  if (!d.active) return;
+  const vh = window.innerHeight;
+  const topZone = 130;
+  const bottomZone = 100;
+  let v = 0;
+  if (d.lastY < topZone) v = -Math.min(22, ((topZone - d.lastY) / topZone) * 22);
+  else if (d.lastY > vh - bottomZone) v = Math.min(22, ((d.lastY - (vh - bottomZone)) / bottomZone) * 22);
+  if (v) {
+    window.scrollBy(0, v);
+    dragUpdate();
   }
+  d.raf = requestAnimationFrame(dragTick);
+}
+
+grid.addEventListener("pointermove", (e) => {
+  if (!dragState.active || e.pointerId !== dragState.pointerId) return;
+  dragState.lastY = e.clientY;
+  dragUpdate();
 });
 
-async function saveManualOrder() {
+async function endDrag() {
+  const d = dragState;
+  if (!d.active) return;
+  const { blockEl, items, to, handle, pointerId } = d;
+  d.active = false;
+  cancelAnimationFrame(d.raf);
+  try { handle.releasePointerCapture(pointerId); } catch (_) {}
+
+  const visualTop = blockEl.getBoundingClientRect().top;
+
+  // نوقف الحركة الناعمة، نصفّر الإزاحات، ونرتب الـ DOM على الترتيب النهائي
+  grid.classList.remove("drag-active");
+  items.forEach((it) => { it.el.style.transform = ""; });
+  blockEl.classList.remove("dragging");
+
+  const others = items.map((it) => it.el).filter((el) => el !== blockEl);
+  grid.insertBefore(blockEl, others[to] || null);
+
+  // الكارت المسحوب ينزل على مكانه الجديد بحركة ناعمة بدل ما "يقفز"
+  const delta = visualTop - blockEl.getBoundingClientRect().top;
+  if (Math.abs(delta) > 1) {
+    blockEl.style.transition = "none";
+    blockEl.style.transform = `translate3d(0,${delta}px,0) scale(1.02)`;
+    void blockEl.offsetHeight;
+    blockEl.style.transition = "transform 0.2s ease";
+    blockEl.style.transform = "";
+    setTimeout(() => { blockEl.style.transition = ""; }, 240);
+  }
+
+  d.items = null;
+  d.blockEl = null;
+  d.handle = null;
+  d.pointerId = null;
+  await saveManualOrder(false);
+}
+
+grid.addEventListener("pointerup", (e) => {
+  if (!dragState.active || e.pointerId !== dragState.pointerId) return;
+  endDrag();
+});
+
+grid.addEventListener("pointercancel", () => {
+  if (!dragState.active) return;
+  finishManualDrag(); // سحب اتقطع: مفيش حفظ لترتيب جزئي
+  render();
+});
+
+// حفظ الترتيب: بنتأكد إن كل عناصر القائمة ظاهرة، وبنرجّع القيم القديمة (للتراجع).
+// بيرجّع null لو الحفظ ماتمش.
+async function saveManualOrder(silent) {
   if (!canManualReorder()) {
     render();
-    return;
+    return null;
   }
 
   const blocks = Array.from(grid.querySelectorAll(".anime-block"));
@@ -839,13 +985,15 @@ async function saveManualOrder() {
   if (blocks.length !== animeList.length) {
     render();
     showToast("لم يتم حفظ الترتيب لأن القائمة ليست معروضة بالكامل");
-    return;
+    return null;
   }
 
   const updates = [];
+  const prev = [];
   blocks.forEach((block, index) => {
     const anime = animeList.find((item) => item.id === block.dataset.blockId);
     if (anime && anime.order !== index) {
+      prev.push({ id: anime.id, order: anime.order });
       anime.order = index;
       updates.push(anime);
     }
@@ -854,26 +1002,232 @@ async function saveManualOrder() {
   if (updates.length) {
     try {
       await dbBulkPutBatched(updates, 25);
-      showToast(t("toast_reorder_saved"));
+      if (!silent) showToast(t("toast_reorder_saved"));
     } catch (error) {
       console.error("Failed to save manual order", error);
       showToast("تعذر حفظ الترتيب. حاول مرة أخرى");
       await reloadFromDB();
+      return null;
     }
   }
+  return prev;
 }
 
-grid.addEventListener("pointerup", async (e) => {
-  if (!dragState.active || e.pointerId !== dragState.pointerId) return;
-  finishManualDrag();
-  await saveManualOrder();
-});
+/* ============ التحديد المتعدد والنقل لأي مكان ============
+   ضغطة طويلة على أي كارت (في وضع التعديل) = بدء التحديد. دوس على كروت تانية
+   تحددها (من نفس المجموعة: مثبت أو عادي)، انزل/اطلع براحتك، وبعدين دوس على
+   «انقل هنا» بين أي اتنين. متاح بس في الترتيب اليدوي من غير بحث أو فلاتر. */
+const MANUAL_ONLY_MSG = "الترتيب والنقل متاحين بس في الفرز اليدوي من غير بحث أو فلاتر";
+let selectBarEl = null;
+let lpTimer = 0;
+let lpStart = null;
+let suppressClickUntil = 0;
 
-grid.addEventListener("pointercancel", () => {
-  if (!dragState.active) return;
-  finishManualDrag();
-  render();
+function isPinnedBlock(el) { return !!el && el.dataset.pinned === "1"; }
+
+function ensureSelectBar() {
+  if (selectBarEl) return selectBarEl;
+  const bar = document.createElement("div");
+  bar.className = "select-bar hidden";
+  bar.innerHTML = `
+    <div class="sb-row">
+      <button type="button" class="sb-btn" data-act="cancel">✕ إلغاء</button>
+      <span class="sb-count" id="sbCount"></span>
+      <button type="button" class="sb-btn" data-act="all">تحديد الكل</button>
+    </div>
+    <div class="sb-row">
+      <button type="button" class="sb-btn sb-accent" data-act="top">⤒ للأول</button>
+      <span class="sb-hint">أو دوس «انقل هنا» بين أي اتنين</span>
+      <button type="button" class="sb-btn sb-accent" data-act="bottom">⤓ للآخر</button>
+    </div>`;
+  bar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+    if (act === "cancel") exitSelectMode();
+    else if (act === "all") {
+      blocks.forEach((b) => { if (isPinnedBlock(b) === selectPinned) selectedIds.add(b.dataset.blockId); });
+      refreshSelectionUI();
+    } else if (act === "top") {
+      const first = blocks.find((b) => !selectedIds.has(b.dataset.blockId) && isPinnedBlock(b) === selectPinned);
+      if (first) moveSelected(first);
+    } else if (act === "bottom") {
+      // المثبت بينتقل لآخر المثبتين (قبل أول عادي)، والعادي لآخر القائمة
+      moveSelected(selectPinned ? (blocks.find((b) => !isPinnedBlock(b)) || null) : null);
+    }
+  });
+  document.body.appendChild(bar);
+  selectBarEl = bar;
+  return bar;
+}
+
+function updateSlotsVisibility() {
+  grid.querySelectorAll(".move-slot").forEach((slot) => {
+    const p = slot.previousElementSibling;
+    const n = slot.nextElementSibling;
+    const prev = p && p.classList.contains("anime-block") ? p : null;
+    const next = n && n.classList.contains("anime-block") ? n : null;
+    // المكان لازم يكون جوه حدود مجموعة العناصر المحددة (مثبت/عادي)
+    let allowed;
+    if (selectPinned) allowed = isPinnedBlock(next) || (isPinnedBlock(prev) && !isPinnedBlock(next));
+    else allowed = !next || !isPinnedBlock(next);
+    // ومفيش لازمة لمكان محاط بعنصرين متحددين
+    const prevSel = prev && prev.classList.contains("selected");
+    const nextSel = next && next.classList.contains("selected");
+    slot.classList.toggle("off", !allowed || !!(prevSel && nextSel));
+  });
+}
+
+function refreshSelectionUI() {
+  grid.classList.toggle("select-mode", selectMode);
+  const bar = ensureSelectBar();
+  bar.classList.toggle("hidden", !selectMode);
+
+  if (!selectMode) {
+    grid.querySelectorAll(".move-slot").forEach((s) => s.remove());
+    grid.querySelectorAll(".anime-block.selected").forEach((b) => b.classList.remove("selected"));
+    fabAdd.classList.toggle("hidden", !editMode);
+    return;
+  }
+
+  fabAdd.classList.add("hidden");
+  const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+  blocks.forEach((b) => b.classList.toggle("selected", selectedIds.has(b.dataset.blockId)));
+
+  if (!grid.querySelector(".move-slot")) {
+    const mk = () => {
+      const s = document.createElement("div");
+      s.className = "move-slot";
+      s.textContent = "⤵ انقل هنا";
+      return s;
+    };
+    blocks.forEach((b) => grid.insertBefore(mk(), b));
+    grid.appendChild(mk());
+  }
+  updateSlotsVisibility();
+
+  const visibleSelected = blocks.filter((b) => selectedIds.has(b.dataset.blockId)).length;
+  document.getElementById("sbCount").textContent = `اخترت ${visibleSelected}`;
+}
+
+function enterSelectMode(block) {
+  if (!canManualReorder()) { showToast(MANUAL_ONLY_MSG); return; }
+  selectMode = true;
+  selectPinned = isPinnedBlock(block);
+  selectedIds.clear();
+  selectedIds.add(block.dataset.blockId);
+  refreshSelectionUI();
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  selectedIds.clear();
+  refreshSelectionUI();
+}
+
+function toggleSelect(block) {
+  const id = block.dataset.blockId;
+  if (!selectedIds.has(id) && isPinnedBlock(block) !== selectPinned) {
+    showToast("اختار من نفس المجموعة بس (المثبتين مع بعض، أو العاديين مع بعض)");
+    return;
+  }
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  if (selectedIds.size === 0) { exitSelectMode(); return; }
+  refreshSelectionUI();
+}
+
+async function moveSelected(targetBlock) {
+  if (!canManualReorder()) { showToast(MANUAL_ONLY_MSG); exitSelectMode(); return; }
+  const blocks = Array.from(grid.querySelectorAll(".anime-block"));
+  const moving = blocks.filter((b) => selectedIds.has(b.dataset.blockId));
+  if (moving.length === 0) { showToast("مفيش عناصر ظاهرة متحددة"); return; }
+
+  // أماكن الكروت القريبة من الشاشة قبل النقل (لحركة الانزلاق)
+  const vh = window.innerHeight;
+  const before = new Map();
+  blocks.forEach((b) => {
+    const r = b.getBoundingClientRect();
+    if (r.bottom > -250 && r.top < vh + 250) before.set(b, r.top);
+  });
+
+  exitSelectMode(); // بيشيل أماكن «انقل هنا» والتحديد
+
+  const frag = document.createDocumentFragment();
+  moving.forEach((b) => frag.appendChild(b));
+  grid.insertBefore(frag, targetBlock || null);
+
+  before.forEach((oldTop, b) => {
+    const d = oldTop - b.getBoundingClientRect().top;
+    if (Math.abs(d) > 1) {
+      b.style.transition = "none";
+      b.style.transform = `translate3d(0,${d}px,0)`;
+    }
+  });
+  void grid.offsetHeight;
+  requestAnimationFrame(() => {
+    before.forEach((_, b) => {
+      if (b.style.transform) {
+        b.style.transition = "transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1)";
+        b.style.transform = "";
+      }
+    });
+    setTimeout(() => before.forEach((_, b) => { b.style.transition = ""; }), 360);
+  });
+
+  moving.forEach((b) => {
+    b.classList.add("just-moved");
+    setTimeout(() => b.classList.remove("just-moved"), 1100);
+  });
+  const r0 = moving[0].getBoundingClientRect();
+  if (r0.top < 90 || r0.bottom > vh - 20) moving[0].scrollIntoView({ block: "center", behavior: "smooth" });
+
+  const prev = await saveManualOrder(true);
+  if (prev === null) return;
+  showToastWithAction(`تم نقل ${moving.length} ${moving.length === 1 ? "عنصر" : "عناصر"}`, "تراجع", async () => {
+    const ups = [];
+    prev.forEach((p) => {
+      const a = animeList.find((x) => x.id === p.id);
+      if (a) { a.order = p.order; ups.push(a); }
+    });
+    try {
+      if (ups.length) await dbBulkPutBatched(ups, 25);
+    } catch (error) {
+      console.error("Failed to undo move", error);
+      showToast("تعذر التراجع");
+    }
+    render();
+  });
+}
+
+// ضغطة طويلة على كارت = بدء التحديد
+grid.addEventListener("pointerdown", (e) => {
+  if (!editMode || selectMode || dragState.active) return;
+  if (e.target.closest(".drag-handle, button, textarea, input, .notes-panel")) return;
+  const block = e.target.closest(".anime-block");
+  if (!block) return;
+  lpStart = { x: e.clientX, y: e.clientY };
+  clearTimeout(lpTimer);
+  lpTimer = setTimeout(() => {
+    lpTimer = 0;
+    suppressClickUntil = Date.now() + 600;
+    try { if (navigator.vibrate) navigator.vibrate(20); } catch (_) {}
+    enterSelectMode(block);
+  }, 450);
 });
+grid.addEventListener("pointermove", (e) => {
+  if (!lpTimer || !lpStart) return;
+  if (Math.abs(e.clientX - lpStart.x) > 10 || Math.abs(e.clientY - lpStart.y) > 10) {
+    clearTimeout(lpTimer);
+    lpTimer = 0;
+  }
+});
+["pointerup", "pointercancel"].forEach((ev) =>
+  grid.addEventListener(ev, () => { clearTimeout(lpTimer); lpTimer = 0; })
+);
+grid.addEventListener("contextmenu", (e) => { if (editMode) e.preventDefault(); });
+
 
 function tryUpdateCardInPlace(anime) {
   if (selectedFilterStatus && anime.status !== selectedFilterStatus) return false;
@@ -931,6 +1285,8 @@ function setEditMode(value) {
   editMode = value;
   toggleEditLabel.textContent = editMode ? t("menu_edit_done") : t("menu_edit");
   fabAdd.classList.toggle("hidden", !editMode);
+  grid.classList.toggle("edit-on", editMode);
+  if (selectMode) exitSelectMode();
   render();
 }
 
