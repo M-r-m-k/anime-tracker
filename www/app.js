@@ -3233,6 +3233,190 @@ document.getElementById("vaultDeleteNoteBtn").addEventListener("click", async ()
   showToast("تم الحذف 🗑️");
 });
 
+/* ============ الإحصائيات (قراءة فقط — مفيش أي حاجة بتتكتب في القاعدة) ============ */
+const statsModalOverlay = document.getElementById("statsModalOverlay");
+const statsBody = document.getElementById("statsBody");
+const MINUTES_PER_EPISODE = 24; // تقدير تقريبي لمدة الحلقة
+const AR_MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+const FINISHED_STATUS_KEYS = ["finished_watched", "finished_boring", "ecchi_finished"];
+
+function statsBarsHtml(rows) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return rows
+    .map((r) => {
+      const pct = Math.round((r.value / max) * 100);
+      const bg = r.color ? `background:${r.color};` : "";
+      return `<div class="bar-row"><span class="bar-label">${escapeHtml(String(r.label))}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;${bg}"></div></div><span class="bar-val">${r.text ?? r.value}</span></div>`;
+    })
+    .join("");
+}
+
+function statsEpisodesWatched(a) {
+  const cur = Number(a.currentEpisode) || 0;
+  const total = Number(a.totalEpisodes) || 0;
+  return total > 0 ? Math.min(cur, total) : cur;
+}
+
+// بداية الأسبوع (السبت) لتاريخ معيّن
+function statsWeekStart(ts) {
+  const d = new Date(ts);
+  const back = (d.getDay() + 1) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back);
+}
+
+function buildStatsHtml(lists, allItems, dataBytes) {
+  const items = allItems.filter((it) => (it.listId || DEFAULT_LIST_ID) === currentListId);
+  const sec = (title, body) => `<h3 class="stat-title">${title}</h3>${body}`;
+  if (items.length === 0) {
+    return `<p class="hint-text">مفيش عناصر في القائمة دي لسه.</p>` + buildStatsAllListsHtml(lists, allItems, dataBytes, sec);
+  }
+
+  // ملخص
+  const rated = items.filter((a) => Number(a.rating) > 0);
+  const avg = rated.length ? (rated.reduce((s, a) => s + Number(a.rating), 0) / rated.length).toFixed(1) : "—";
+  const episodes = items.reduce((s, a) => s + statsEpisodesWatched(a), 0);
+  const hours = Math.round((episodes * MINUTES_PER_EPISODE) / 60);
+  const card = (num, lbl) => `<div class="stat-card"><div class="stat-num">${num}</div><div class="stat-lbl">${lbl}</div></div>`;
+  let html = `<div class="stat-grid">${card(items.length, "عدد الأنميات")}${card(avg, "متوسط التقييم")}${card(episodes, "حلقات شفتها")}${card("≈ " + hours, "ساعة مشاهدة تقريبًا")}</div>`;
+  html += `<p class="hint-text">الساعات تقدير على أساس ${MINUTES_PER_EPISODE} دقيقة للحلقة.</p>`;
+
+  // حسب الحالة
+  const known = new Set(appSettings.statuses.map((s) => s.key));
+  const statusRows = appSettings.statuses.map((s) => ({
+    label: s.label, color: s.color, value: items.filter((a) => a.status === s.key).length,
+  }));
+  const none = items.filter((a) => !a.status).length;
+  const orphan = items.filter((a) => a.status && !known.has(a.status)).length;
+  if (none) statusRows.push({ label: "بدون حالة", color: "#635d78", value: none });
+  if (orphan) statusRows.push({ label: "حالة محذوفة", color: "#635d78", value: orphan });
+  html += sec("حسب الحالة", statsBarsHtml(statusRows));
+
+  // توزيع التقييم
+  const ratingRows = [5, 4, 3, 2, 1].map((n) => ({ label: "★".repeat(n), value: items.filter((a) => Number(a.rating) === n).length }));
+  ratingRows.push({ label: "بدون تقييم", value: items.length - rated.length });
+  html += sec("توزيع التقييم", statsBarsHtml(ratingRows));
+
+  // أعلى ١٠ تقييمًا
+  const top = rated
+    .slice()
+    .sort((a, b) => Number(b.rating) - Number(a.rating) || a.name.localeCompare(b.name, "ar"))
+    .slice(0, 10);
+  html += sec("أعلى ١٠ تقييمًا", top.length
+    ? top.map((a, i) => `<div class="top-row"><span>${i + 1}. ${escapeHtml(a.name)}</span><span>${"⭐".repeat(Number(a.rating))}</span></div>`).join("")
+    : `<p class="hint-text">لسه ماقيّمتش أي أنمي.</p>`);
+
+  // السنة والموسم
+  const byYear = {};
+  items.forEach((a) => { const y = Number(a.year) || 0; byYear[y] = (byYear[y] || 0) + 1; });
+  const yearRows = Object.keys(byYear).filter((y) => y !== "0").sort((a, b) => b - a).slice(0, 10).map((y) => ({ label: y, value: byYear[y] }));
+  if (byYear[0]) yearRows.push({ label: "بدون سنة", value: byYear[0] });
+  html += sec("حسب سنة العرض", statsBarsHtml(yearRows));
+
+  const bySeason = {};
+  items.forEach((a) => { const s = Number(a.season) || 0; bySeason[s] = (bySeason[s] || 0) + 1; });
+  const seasonRows = Object.keys(bySeason).filter((s) => s !== "0").sort((a, b) => a - b).slice(0, 10).map((s) => ({ label: "الموسم " + s, value: bySeason[s] }));
+  if (bySeason[0]) seasonRows.push({ label: "بدون موسم", value: bySeason[0] });
+  html += sec("حسب الموسم", statsBarsHtml(seasonRows));
+
+  // النشاط (من آخر مشاهدة لكل أنمي)
+  const weekRows = [];
+  const w0 = statsWeekStart(Date.now());
+  for (let i = 0; i < 8; i++) {
+    const start = new Date(w0.getFullYear(), w0.getMonth(), w0.getDate() - 7 * i).getTime();
+    const end = new Date(w0.getFullYear(), w0.getMonth(), w0.getDate() - 7 * i + 7).getTime();
+    const label = i === 0 ? "الأسبوع ده" : `${new Date(start).getDate()}/${new Date(start).getMonth() + 1}`;
+    weekRows.push({ label, value: items.filter((a) => a.lastWatchedAt >= start && a.lastWatchedAt < end).length });
+  }
+  html += sec("نشاطك: كل أسبوع", statsBarsHtml(weekRows));
+
+  const now = new Date();
+  const monthWatched = [];
+  const monthAdded = [];
+  for (let i = 0; i < 6; i++) {
+    const start = new Date(now.getFullYear(), now.getMonth() - i, 1).getTime();
+    const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1).getTime();
+    const label = AR_MONTHS[new Date(start).getMonth()];
+    monthWatched.push({ label, value: items.filter((a) => a.lastWatchedAt >= start && a.lastWatchedAt < end).length });
+    monthAdded.push({ label, value: items.filter((a) => a.createdAt >= start && a.createdAt < end).length });
+  }
+  html += sec("نشاطك: كل شهر", statsBarsHtml(monthWatched));
+  html += sec("إضافات كل شهر", statsBarsHtml(monthAdded));
+  html += `<p class="hint-text">النشاط محسوب من تاريخ آخر مشاهدة لكل أنمي، مش من كل حلقة لوحدها.</p>`;
+
+  return html + buildStatsAllListsHtml(lists, allItems, dataBytes, sec);
+}
+
+// نسبة الإنجاز لكل قائمة + حجم البيانات
+function buildStatsAllListsHtml(lists, allItems, dataBytes, sec) {
+  const rows = lists.map((l) => {
+    const its = allItems.filter((a) => (a.listId || DEFAULT_LIST_ID) === l.id);
+    let cur = 0, total = 0;
+    its.forEach((a) => {
+      const t = Number(a.totalEpisodes) || 0;
+      if (t > 0) { total += t; cur += Math.min(Number(a.currentEpisode) || 0, t); }
+    });
+    const pct = total > 0 ? Math.round((cur / total) * 100) : 0;
+    return { label: `${l.name} (${its.length})`, value: pct, text: total > 0 ? pct + "%" : "—" };
+  });
+  const mb = (dataBytes / (1024 * 1024)).toFixed(1);
+  let html = sec("نسبة إنجاز كل قائمة", statsBarsHtml(rows));
+  html += `<p class="hint-text">محسوبة من الحلقات اللي شفتها على إجمالي الحلقات المسجّلة.</p>`;
+  html += sec("البيانات", `<div class="top-row"><span>إجمالي العناصر</span><span>${allItems.length}</span></div>` +
+    `<div class="top-row"><span>عدد القوائم</span><span>${lists.length}</span></div>` +
+    `<div class="top-row"><span>حجم البيانات تقريبًا</span><span>${mb} ميجا</span></div>`);
+  return html;
+}
+
+async function estimateDataBytes(allItems) {
+  let bytes = 0;
+  for (let i = 0; i < allItems.length; i++) {
+    bytes += JSON.stringify(allItems[i]).length;
+    if (i % 25 === 24) await new Promise((r) => setTimeout(r, 0));
+  }
+  return bytes;
+}
+
+async function openStatsModal() {
+  dropdownMenu.classList.add("hidden");
+  statsBody.innerHTML = `<p class="hint-text">جاري الحساب...</p>`;
+  statsModalOverlay.classList.remove("hidden");
+  try {
+    const [lists, allItems] = await Promise.all([dbListsGetAll(), dbGetAll()]);
+    const cur = lists.find((l) => l.id === currentListId);
+    document.getElementById("statsListName").textContent = cur ? `القائمة الحالية: ${cur.name}` : "";
+    const bytes = await estimateDataBytes(allItems);
+    statsBody.innerHTML = buildStatsHtml(lists, allItems, bytes);
+  } catch (error) {
+    console.error("Failed to build stats", error);
+    statsBody.innerHTML = `<p class="hint-text">تعذر حساب الإحصائيات.</p>`;
+  }
+}
+document.getElementById("openStatsBtn").addEventListener("click", openStatsModal);
+document.getElementById("closeStatsBtn").addEventListener("click", () => statsModalOverlay.classList.add("hidden"));
+
+/* ============ اختار لي واحد (عشوائي من اللي لسه ماخلصش) ============ */
+function pickRandomAnime() {
+  dropdownMenu.classList.add("hidden");
+  const pool = animeList.filter((a) => {
+    if (FINISHED_STATUS_KEYS.includes(a.status)) return false;
+    const p = getProgress(a);
+    return !(p && p.percent >= 100);
+  });
+  if (pool.length === 0) { showToast("مفيش حاجة متبقية تتشاف في القائمة دي"); return; }
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+
+  const block = grid.querySelector(`.anime-block[data-block-id="${pick.id}"]`);
+  if (block) {
+    block.scrollIntoView({ block: "center", behavior: "smooth" });
+    block.classList.add("just-moved");
+    setTimeout(() => block.classList.remove("just-moved"), 1100);
+  } else {
+    openDetailModal(pick.id); // مخفي بسبب بحث أو فلتر
+  }
+  showToastWithAction(`اخترت لك: ${pick.name}`, "اختار تاني", () => setTimeout(pickRandomAnime, 0));
+}
+document.getElementById("randomPickBtn").addEventListener("click", pickRandomAnime);
+
 /* ============ بدء التشغيل ============ */
 (async function init() {
   await openDB();

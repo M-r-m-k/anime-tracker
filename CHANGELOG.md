@@ -16,3 +16,9 @@
 - Selection and drag stay inside one group (pinned or normal) and work only in manual sort with no search or filters.
 - Added "Undo" after a multi-select move.
 - No change to IndexedDB schema (v4), export/import format, or image handling.
+
+## Source update — Phase 1: statistics, random pick, data size
+
+- New "Statistics" screen (read-only): totals, average rating, episodes and approximate hours, status breakdown, rating distribution, top 10, year/season distribution, weekly and monthly activity, completion per list, item count and data size.
+- New "Pick one for me" menu item: random title from the current list that is not finished.
+- No new fields, no schema change (IndexedDB v4), export/import untouched.
